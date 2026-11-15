@@ -57,8 +57,8 @@ window.__ModuleLoader__.load({
       'tree.expand': '展开',
       'tree.collapse': '收起',
       'action.refresh': '重新读取文件',
-      'action.treeShow': '显示大纲',
-      'action.treeHide': '隐藏大纲',
+      'action.drawerOpen': '打开大纲',
+      'action.drawerClose': '关闭大纲',
       'action.builtin': '用内置预览打开',
       'state.loading': '正在读取文件…',
       'state.empty': '这个 Markdown 文件没有内容。',
@@ -86,8 +86,8 @@ window.__ModuleLoader__.load({
       'tree.expand': 'Expand',
       'tree.collapse': 'Collapse',
       'action.refresh': 'Read the file again',
-      'action.treeShow': 'Show outline',
-      'action.treeHide': 'Hide outline',
+      'action.drawerOpen': 'Open outline',
+      'action.drawerClose': 'Close outline',
       'action.builtin': 'Open in the built-in preview',
       'state.loading': 'Reading document…',
       'state.empty': 'This Markdown file has no content.',
@@ -1082,6 +1082,16 @@ window.__ModuleLoader__.load({
           if (map === undefined) return []
           return [...map.values()].sort((left, right) => left.order - right.order)
         },
+        allEntries() {
+          const byAddress = new Map()
+          for (const map of sessions.values()) {
+            for (const entry of map.values()) {
+              const held = byAddress.get(entry.address)
+              if (held === undefined || held.order < entry.order) byAddress.set(entry.address, entry)
+            }
+          }
+          return [...byAddress.values()].sort((left, right) => left.order - right.order)
+        },
         observe,
         ensure,
         reload(address) {
@@ -1103,13 +1113,13 @@ window.__ModuleLoader__.load({
 
     /** Persisted panel preferences: outline visibility and collapsed tree nodes. */
     function createUiState() {
-      const initial = { treeOpen: true, collapsed: {} }
+      const initial = { drawerOpen: false, collapsed: {} }
       try {
         const raw = localStorage.getItem(UI_KEY)
         if (raw !== null && raw !== undefined) {
           const parsed = JSON.parse(raw)
           if (parsed !== null && typeof parsed === 'object') {
-            if (typeof parsed.treeOpen === 'boolean') initial.treeOpen = parsed.treeOpen
+            if (typeof parsed.drawerOpen === 'boolean') initial.drawerOpen = parsed.drawerOpen
             if (parsed.collapsed !== null && typeof parsed.collapsed === 'object') initial.collapsed = parsed.collapsed
           }
         }
@@ -1142,14 +1152,23 @@ window.__ModuleLoader__.load({
           const collapsed = { ...state.collapsed }
           if (collapsed[key] === true) delete collapsed[key]
           else collapsed[key] = true
-          state = { treeOpen: state.treeOpen, collapsed }
+          state = { drawerOpen: state.drawerOpen, collapsed }
           persist()
           publish()
         },
-        toggleTree() {
-          state = { treeOpen: !state.treeOpen, collapsed: state.collapsed }
+        toggleDrawer() {
+          state = { drawerOpen: !state.drawerOpen, collapsed: state.collapsed }
           persist()
           publish()
+        },
+        closeDrawer() {
+          if (!state.drawerOpen) return
+          state = { drawerOpen: false, collapsed: state.collapsed }
+          persist()
+          publish()
+        },
+        drawerState() {
+          return snapshot.drawerOpen
         },
         scrollOf(address) {
           const value = scrollPositions.get(address)
@@ -1263,7 +1282,7 @@ window.__ModuleLoader__.load({
     function OutlineRail(props) {
       const {
         groups, activeAddress, activeLine, collapsedOf, onToggleNode, onOpenFile, onOpenHeading,
-        headingsOf, loadingOf, width, fileCount, labels,
+        headingsOf, loadingOf, width, fileCount, labels, onClose,
       } = props
       const rows = []
       const toggleLabel = (collapsed) => (collapsed ? labels.expand : labels.collapse)
@@ -1372,36 +1391,104 @@ window.__ModuleLoader__.load({
       return h('aside', { className: 'mo-tree', style: { width } },
         h('div', { className: 'mo-tree-head' },
           h('span', { className: 'mo-tree-title' }, labels.title),
-          h('span', { className: 'mo-tree-count', title: format(labels.count, { count: fileCount }) }, String(fileCount))),
+          h('span', { className: 'mo-tree-count', title: format(labels.count, { count: fileCount }) }, String(fileCount)),
+          onClose === undefined ? null : h('button', {
+            type: 'button',
+            className: 'mo-tree-close',
+            onClick: onClose,
+            title: labels.close,
+            'aria-label': labels.close,
+          }, '×')),
         h('div', { className: 'mo-tree-scroll' }, ...(rows.length === 0
           ? [h('p', { key: 'empty', className: 'mo-tree-empty' }, labels.empty)]
           : rows)))
     }
 
     /** The table of contents and document for one open Markdown tab. */
+    /**
+     * Group catalog entries for the outline: workspace, then the Session that
+     * authorizes each file, then the files opened from it.
+     * @param entries - catalog entries.
+     * @param workspaces - Workspace views, in sidebar order.
+     * @param sessionsById - Session list rows, for display titles.
+     * @param t - translate function.
+     * @returns ordered groups.
+     */
+    function groupOutline(entries, workspaces, sessionsById, t) {
+      const bySession = new Map()
+      const ordered = []
+      for (const workspace of workspaces === undefined || workspaces === null ? [] : workspaces) {
+        ordered.push(workspace)
+        for (const id of workspace.sessionIds === undefined ? [] : workspace.sessionIds) {
+          if (!bySession.has(id)) bySession.set(id, workspace)
+        }
+      }
+      const buckets = new Map()
+      const bucketFor = (key, title, path) => {
+        let bucket = buckets.get(key)
+        if (bucket === undefined) {
+          bucket = { key, title, path, fileCount: 0, sessions: new Map() }
+          buckets.set(key, bucket)
+        }
+        return bucket
+      }
+      for (const entry of entries) {
+        const workspace = bySession.get(entry.sessionId)
+        const bucket = workspace === undefined
+          ? bucketFor('other', t('tree.noWorkspace'), undefined)
+          : bucketFor(`w:${workspace.workspaceId}`, workspace.title || basenameOf(workspace.path || ''), workspace.path)
+        bucket.fileCount += 1
+        let session = bucket.sessions.get(entry.sessionId)
+        if (session === undefined) {
+          const row = sessionsById === undefined ? undefined : sessionsById[entry.sessionId]
+          session = {
+            sessionId: entry.sessionId,
+            title: row === undefined || row.displayTitle === undefined ? shortId(entry.sessionId) : row.displayTitle,
+            files: [],
+          }
+          bucket.sessions.set(entry.sessionId, session)
+        }
+        session.files.push(entry)
+      }
+      const result = []
+      for (const workspace of ordered) {
+        const bucket = buckets.get(`w:${workspace.workspaceId}`)
+        if (bucket !== undefined) result.push(bucket)
+      }
+      const other = buckets.get('other')
+      if (other !== undefined) result.push(other)
+      result.forEach((bucket) => {
+        bucket.sessions = [...bucket.sessions.values()]
+        for (const session of bucket.sessions) {
+          // Two files with one basename need their directory to tell them apart.
+          const counts = new Map()
+          for (const file of session.files) counts.set(file.name, (counts.get(file.name) || 0) + 1)
+          for (const file of session.files) {
+            file.hint = counts.get(file.name) > 1
+              ? dirnameOf(file.path).replace(/\/+$/, '').split('/').filter(Boolean).slice(-2).join('/')
+              : undefined
+          }
+        }
+      })
+      return result
+    }
+
+    /**
+     * The right-Sidebar document. It draws the Markdown file alone; the outline
+     * lives in the left drawer, so the preview is one unbroken reading column.
+     */
     function MarkdownPanel(props) {
-      const {
-        useTabInfo, useResource, useWorkspaces, useSessions, sessionId, t: localeT,
-      } = props
-      const fallbackSelector = useCallback(() => undefined, [])
-      const useWs = typeof useWorkspaces === 'function' ? useWorkspaces : fallbackSelector
-      const useSe = typeof useSessions === 'function' ? useSessions : fallbackSelector
+      const { useTabInfo, useResource, t: localeT } = props
       const t = typeof localeT === 'function' ? localeT : boundT
 
       const info = useTabInfo()
       const tab = info.tab
       const address = tab.contentId
       const meta = useResource(address)
-      const catalogSnapshot = useSyncExternalStore(catalog.subscribe, catalog.getSnapshot)
       const uiSnapshot = useSyncExternalStore(ui.subscribe, ui.getSnapshot)
-      const workspaces = useWs((state) => (state === undefined ? undefined : state.items))
-      const sessionsById = useSe((state) => (state === undefined ? undefined : state.byId))
-
       const file = parseSessionAddress(address)
       const rootRef = useRef(null)
       const scrollRef = useRef(null)
-      const [panelWidth, setPanelWidth] = useState(0)
-      const [scrollLine, setScrollLine] = useState(undefined)
       const [flash, setFlash] = useState(false)
 
       const doc = catalog.docOf(address)
@@ -1420,21 +1507,8 @@ window.__ModuleLoader__.load({
         if (fileVersion !== undefined) catalog.ensure(address)
       }, [address, fileVersion])
 
-      useEffect(() => {
-        const element = rootRef.current
-        if (element === null || typeof ResizeObserver === 'undefined') return undefined
-        const observer = new ResizeObserver((records) => {
-          const entry = records[0]
-          const width = entry === undefined ? 0 : Math.round(entry.contentRect.width)
-          setPanelWidth((previous) => (Math.abs(previous - width) >= 2 ? width : previous))
-        })
-        observer.observe(element)
-        return () => observer.disconnect()
-      }, [])
-
       // The reading position belongs to the file address, not to this mounted
-      // body: it survives switching to another file and back, and a reload of
-      // the same file keeps the reader where they were.
+      // body: it survives switching to another file and back.
       useEffect(() => {
         const element = scrollRef.current
         if (element === null) return
@@ -1466,65 +1540,6 @@ window.__ModuleLoader__.load({
           if (typeof element.focus === 'function') element.focus({ preventScroll: true })
         }
       }, [tab.navigation === undefined ? undefined : tab.navigation.revision, doc === undefined ? undefined : doc.version])
-
-      const groups = useMemo(() => {
-        const bySession = new Map()
-        const ordered = []
-        for (const workspace of workspaces === undefined || workspaces === null ? [] : workspaces) {
-          ordered.push(workspace)
-          for (const id of workspace.sessionIds === undefined ? [] : workspace.sessionIds) {
-            if (!bySession.has(id)) bySession.set(id, workspace)
-          }
-        }
-        const buckets = new Map()
-        const bucketFor = (key, title, path) => {
-          let bucket = buckets.get(key)
-          if (bucket === undefined) {
-            bucket = { key, title, path, fileCount: 0, sessions: new Map() }
-            buckets.set(key, bucket)
-          }
-          return bucket
-        }
-        for (const entry of catalog.entriesFor(sessionId)) {
-          const workspace = bySession.get(entry.sessionId)
-          const bucket = workspace === undefined
-            ? bucketFor('other', t('tree.noWorkspace'), undefined)
-            : bucketFor(`w:${workspace.workspaceId}`, workspace.title || basenameOf(workspace.path || ''), workspace.path)
-          bucket.fileCount += 1
-          let session = bucket.sessions.get(entry.sessionId)
-          if (session === undefined) {
-            const row = sessionsById === undefined ? undefined : sessionsById[entry.sessionId]
-            session = {
-              sessionId: entry.sessionId,
-              title: row === undefined || row.displayTitle === undefined ? shortId(entry.sessionId) : row.displayTitle,
-              files: [],
-            }
-            bucket.sessions.set(entry.sessionId, session)
-          }
-          session.files.push(entry)
-        }
-        const result = []
-        for (const workspace of ordered) {
-          const bucket = buckets.get(`w:${workspace.workspaceId}`)
-          if (bucket !== undefined) result.push(bucket)
-        }
-        const other = buckets.get('other')
-        if (other !== undefined) result.push(other)
-        result.forEach((bucket) => {
-          bucket.sessions = [...bucket.sessions.values()]
-          for (const session of bucket.sessions) {
-            // Two files with one basename need their directory to tell them apart.
-            const counts = new Map()
-            for (const file of session.files) counts.set(file.name, (counts.get(file.name) || 0) + 1)
-            for (const file of session.files) {
-              file.hint = counts.get(file.name) > 1
-                ? dirnameOf(file.path).replace(/\/+$/, '').split('/').filter(Boolean).slice(-2).join('/')
-                : undefined
-            }
-          }
-        })
-        return result
-      }, [catalogSnapshot.revision, sessionId, workspaces, sessionsById, t])
 
       const resolveImage = useCallback((destination) => {
         if (typeof destination !== 'string' || destination.length === 0) return undefined
@@ -1559,7 +1574,6 @@ window.__ModuleLoader__.load({
         const target = element.querySelector(`[data-md-line="${line}"]`)
         if (target === null) return
         element.scrollTop = Math.max(0, target.offsetTop - 12)
-        // Keyboard readers continue in the document, not in the rail.
         if (typeof element.focus === 'function') element.focus({ preventScroll: true })
       }, [])
 
@@ -1583,36 +1597,11 @@ window.__ModuleLoader__.load({
         const base = dirnameOf(file.path)
         const resolved = resolveRelativePath(base, href)
         if (resolved === undefined) return
-        const next = sessionFileAddress(file.sessionId, resolved)
-        tab.actions.openResource(next)
+        tab.actions.openResource(sessionFileAddress(file.sessionId, resolved))
       }, [file, headings, scrollToLine, tab.actions])
 
-      const openFile = useCallback((nextAddress) => {
-        if (nextAddress === address) return
-        // Open or reveal: the outline is a catalog, so browsing it must not
-        // close the file it was opened from.
-        tab.actions.openResource(nextAddress)
-      }, [address, tab.actions])
-
-      const openHeading = useCallback((targetAddress, line) => {
-        if (targetAddress === address) {
-          scrollToLine(line)
-          return
-        }
-        tab.actions.openResource(targetAddress, { params: { line } })
-      }, [address, scrollToLine, tab.actions])
-
-      const onScroll = useCallback(() => {
-        const element = scrollRef.current
-        if (element === null) return
-        ui.rememberScroll(address, element.scrollTop)
-        const marks = element.querySelectorAll('[data-md-outline]')
-        let current
-        for (const mark of marks) {
-          if (mark.offsetTop - 20 <= element.scrollTop) current = Number(mark.getAttribute('data-md-line'))
-          else break
-        }
-        setScrollLine((previous) => (previous === current ? previous : current))
+      const onScroll = useCallback((event) => {
+        ui.rememberScroll(address, event.currentTarget.scrollTop)
       }, [address])
 
       const refresh = useCallback(() => {
@@ -1630,11 +1619,6 @@ window.__ModuleLoader__.load({
         }
       }, [address])
 
-      const openTree = uiSnapshot.treeOpen
-      // The reader's toggle alone decides; the rail never disappears behind
-      // their back. Narrow panes get a narrower rail, not a hidden one.
-      const width = panelWidth === 0 ? 196 : Math.max(148, Math.min(240, Math.round(panelWidth * 0.38)))
-      const showTree = openTree
       const metaFailure = meta !== undefined && meta !== null && meta.status === 'failed' ? meta.failure : undefined
       const failure = doc === undefined ? undefined : doc.error
       const notice = failure === undefined ? metaFailure : failure
@@ -1688,10 +1672,71 @@ window.__ModuleLoader__.load({
 
       return h('div', { className: 'mo-root', ref: rootRef },
         h('style', null, CSS),
-        showTree ? h(OutlineRail, {
+        h('div', { className: 'mo-main' },
+          h('div', { className: 'mo-head' },
+            h(IconButton, {
+              onClick: ui.toggleDrawer,
+              title: uiSnapshot.drawerOpen ? t('action.drawerClose') : t('action.drawerOpen'),
+              active: uiSnapshot.drawerOpen,
+            }, SVG.outline(uiSnapshot.drawerOpen)),
+            h('div', { className: 'mo-heading' },
+              h('span', { className: 'mo-title', title: displayPath }, title),
+              h('span', { className: 'mo-sub', title: displayPath }, displayPath)),
+            flash ? h('span', { className: 'mo-chip' }, t('state.updated')) : null,
+            h(IconButton, { onClick: refresh, title: t('action.refresh') }, SVG.refresh()),
+            h(IconButton, { onClick: openBuiltin, title: t('action.builtin') }, SVG.external())),
+          body))
+    }
+
+    /**
+     * The outline drawer: a left-edge overlay listing every Markdown file this
+     * plugin has opened, grouped by workspace, Session, file, and heading. The
+     * document keeps the right Sidebar to itself.
+     */
+    function OutlineDrawer(props) {
+      const { useWorkspaces, useSessions, t: localeT } = props
+      const fallbackSelector = useCallback(() => undefined, [])
+      const useWs = typeof useWorkspaces === 'function' ? useWorkspaces : fallbackSelector
+      const useSe = typeof useSessions === 'function' ? useSessions : fallbackSelector
+      const t = typeof localeT === 'function' ? localeT : boundT
+      const uiSnapshot = useSyncExternalStore(ui.subscribe, ui.getSnapshot)
+      const catalogSnapshot = useSyncExternalStore(catalog.subscribe, catalog.getSnapshot)
+      const workspaces = useWs((state) => (state === undefined ? undefined : state.items))
+      const sessionsById = useSe((state) => (state === undefined ? undefined : state.byId))
+      const open = uiSnapshot.drawerOpen
+
+      useEffect(() => {
+        if (!open) return undefined
+        const onKey = (event) => {
+          if (event.key === 'Escape') ui.closeDrawer()
+        }
+        window.addEventListener('keydown', onKey)
+        return () => window.removeEventListener('keydown', onKey)
+      }, [open])
+
+      const groups = useMemo(
+        () => groupOutline(catalog.allEntries(), workspaces, sessionsById, t),
+        [catalogSnapshot.revision, workspaces, sessionsById, t],
+      )
+
+      if (!open) return null
+
+      const openFile = (address) => {
+        try {
+          pluginCtx.sidebarRight.openResource(address)
+        } catch (_unavailable) { /* No on-screen Session: nothing to open beside. */ }
+      }
+      const openHeading = (address, line) => {
+        try {
+          pluginCtx.sidebarRight.openResource(address, { params: { line } })
+        } catch (_unavailable) { /* No on-screen Session: nothing to open beside. */ }
+      }
+      return h('div', { className: 'mo-drawer', role: 'dialog', 'aria-label': t('tree.title') },
+        h('style', null, CSS),
+        h(OutlineRail, {
           groups,
-          activeAddress: address,
-          activeLine: scrollLine,
+          activeAddress: undefined,
+          activeLine: undefined,
           collapsedOf: ui.collapsed,
           onToggleNode: ui.toggleNode,
           onOpenFile: openFile,
@@ -1701,8 +1746,9 @@ window.__ModuleLoader__.load({
             const cached = catalog.docOf(targetAddress)
             return cached === undefined || cached.status === 'loading'
           },
-          width,
+          width: '100%',
           fileCount: groups.reduce((total, group) => total + group.fileCount, 0),
+          onClose: ui.closeDrawer,
           labels: {
             title: t('tree.title'),
             count: t('tree.count'),
@@ -1710,22 +1756,9 @@ window.__ModuleLoader__.load({
             loading: t('tree.loading'),
             expand: t('tree.expand'),
             collapse: t('tree.collapse'),
+            close: t('action.drawerClose'),
           },
-        }) : null,
-        h('div', { className: 'mo-main' },
-          h('div', { className: 'mo-head' },
-            h(IconButton, {
-              onClick: ui.toggleTree,
-              title: openTree ? t('action.treeHide') : t('action.treeShow'),
-              active: openTree,
-            }, SVG.outline(openTree)),
-            h('div', { className: 'mo-heading' },
-              h('span', { className: 'mo-title', title: displayPath }, title),
-              h('span', { className: 'mo-sub', title: displayPath }, displayPath)),
-            flash ? h('span', { className: 'mo-chip' }, t('state.updated')) : null,
-            h(IconButton, { onClick: refresh, title: t('action.refresh') }, SVG.refresh()),
-            h(IconButton, { onClick: openBuiltin, title: t('action.builtin') }, SVG.external())),
-          body))
+        }))
     }
 
     /**
@@ -1765,6 +1798,11 @@ window.__ModuleLoader__.load({
 .mo-tree-count{margin-left:auto;padding-left:8px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .mo-tree-scroll{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;padding:6px 4px 16px;scrollbar-width:thin;scrollbar-color:var(--dsw-alias-scrollbar-bg-l2) transparent}
 .mo-tree-empty{margin:12px 10px;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}
+.mo-drawer{position:fixed;left:0;top:44px;bottom:0;z-index:60;display:flex;flex-direction:column;width:320px;min-height:0;overflow:hidden;background:var(--dsw-alias-bg-base);border-right:.5px solid var(--dsw-alias-border-l2);box-shadow:0 12px 32px rgb(0 0 0 / 22%)}
+.mo-drawer .mo-tree{width:100%;flex:1 1 auto;border-right:0}
+.mo-tree-close{display:inline-flex;flex:0 0 auto;align-items:center;justify-content:center;width:18px;height:18px;margin-left:4px;padding:0;border:0;border-radius:var(--dsw-radius-xs, 4px);background:none;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:14px;line-height:1;cursor:pointer}
+.mo-tree-close:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.mo-tree-close:focus-visible{outline:none;box-shadow:0 0 0 2px var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary))}
 .mo-row{display:flex;align-items:center;gap:4px;box-sizing:border-box;width:100%;min-width:0;margin:0;padding:4px 8px 4px 6px;border:0;border-radius:var(--dsw-radius-sm);background:none;color:inherit;font:inherit;text-align:left;cursor:pointer;-webkit-appearance:none;appearance:none}
 .mo-row:hover{background:var(--dsw-alias-bg-layer-2)}
 .mo-row:focus-visible{outline:none;box-shadow:0 0 0 2px var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary))}
@@ -1911,6 +1949,12 @@ window.__ModuleLoader__.load({
         { name: 'sidebar.right.pane.tab.title', key: ID },
         MarkdownTitle,
       )), 'markdown-outline: tab title')
+      ctx.effect(() => ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+        name: 'shell.overlay',
+        id: 'markdown-outline-drawer',
+        order: 20,
+        locale: NS,
+      }, OutlineDrawer)), 'markdown-outline: outline drawer')
       ctx.effect(() => {
         const unsubscribe = ctx.sidebarRight.openTabs.subscribe(() => { catalog.sync() })
         catalog.sync()
