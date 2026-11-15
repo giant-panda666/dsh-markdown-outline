@@ -104,11 +104,13 @@ if (typeof mod.apply !== 'function') throw new Error('plugin has no apply')
 let tabDefinition
 let componentRegistration
 let titleRegistration
-let drawerRegistration
+let pageRegistration
+let entryRegistration
 const opened = []
 let openTabsSnapshot = []
 const openTabsListeners = []
 const disposeFns = []
+const sessionOpens = []
 let readCalls = 0
 
 const ctx = {
@@ -137,16 +139,20 @@ const ctx = {
   },
   slots: {
     inject(name, callback) {
-      const known = ['sidebar.right.pane.tab', 'sidebar.right.pane.tab.title', 'shell.overlay']
+      const known = ['sidebar.right.pane.tab', 'sidebar.right.pane.tab.title', 'main', 'sidebar.panellist']
       if (!known.includes(name)) throw new Error(`unexpected slot ${name}`)
       callback()
     },
     register(options, component) {
       if (options.name === 'sidebar.right.pane.tab.title') titleRegistration = { options, component }
-      else if (options.name === 'shell.overlay') drawerRegistration = { options, component }
+      else if (options.name === 'main') pageRegistration = { options, component }
+      else if (options.name === 'sidebar.panellist') entryRegistration = { options, component }
       else componentRegistration = { options, component }
       return () => {}
     },
+  },
+  uiWorkspace: {
+    openSession(id) { sessionOpens.push(id) },
   },
   remote: {
     workspaceFiles: {
@@ -178,7 +184,8 @@ mod.apply(ctx)
 if (tabDefinition === undefined) throw new Error('tab type was not registered')
 if (componentRegistration === undefined) throw new Error('tab body was not registered')
 if (titleRegistration === undefined) throw new Error('tab title was not registered')
-if (drawerRegistration === undefined) throw new Error('outline drawer was not registered')
+if (pageRegistration === undefined) throw new Error('outline page was not registered')
+if (entryRegistration === undefined) throw new Error('sidebar entry was not registered')
 if (tabDefinition.priority !== 'extension') throw new Error(`unexpected band ${tabDefinition.priority}`)
 if (!tabDefinition.patterns.includes('*.md')) throw new Error('patterns do not claim *.md')
 if (tabDefinition.canOpen('dsh-resource://file/session/sess-1/a/b.md') !== true) throw new Error('canOpen rejected a .md session address')
@@ -269,10 +276,7 @@ walk(rendered, (node) => {
 for (const expected of ['mo-root', 'mo-head', 'mo-scroll', 'mo-md']) {
   if (!classes.has(expected)) throw new Error(`the document panel is missing .${expected}`)
 }
-const outlineToggle = collect(rendered, (node) => node.type === 'button' && node.props.title === 'action.drawerOpen')[0]
-if (outlineToggle === undefined) throw new Error('the document panel has no outline toggle')
-outlineToggle.props.onClick()
-const drawer = drawerRegistration.component(props)
+const drawer = pageRegistration.component(props)
 const drawerClasses = new Set()
 const drawerTexts = []
 walk(drawer, (node) => {
@@ -281,12 +285,12 @@ walk(drawer, (node) => {
   }
   for (const child of node.children) if (typeof child === 'string') drawerTexts.push(child)
 })
-for (const expected of ['mo-drawer', 'mo-tree', 'mo-row-workspace', 'mo-row-session', 'mo-row-file', 'mo-row-heading']) {
-  if (!drawerClasses.has(expected)) throw new Error(`the outline drawer is missing .${expected}`)
+for (const expected of ['mo-page', 'mo-tree', 'mo-row-workspace', 'mo-row-session', 'mo-row-file', 'mo-row-heading']) {
+  if (!drawerClasses.has(expected)) throw new Error(`the outline page is missing .${expected}`)
 }
 const drawerJoined = drawerTexts.join(' ')
 for (const expected of ['demo-workspace', 'Demo session', 'demo.md']) {
-  if (!drawerJoined.includes(expected)) throw new Error(`the outline drawer is missing ${JSON.stringify(expected)}: ${JSON.stringify(drawerTexts.slice(0, 20))}`)
+  if (!drawerJoined.includes(expected)) throw new Error(`the outline page is missing ${JSON.stringify(expected)}: ${JSON.stringify(drawerTexts.slice(0, 20))}`)
 }
 const headingTexts = []
 walk(rendered, (node) => {
@@ -317,12 +321,13 @@ openTabsSnapshot = [
 openTabsListeners.forEach((listener) => listener())
 await new Promise((resolve) => setTimeout(resolve, 0))
 
-const rerenderedDrawer = drawerRegistration.component(props)
+const rerenderedDrawer = pageRegistration.component(props)
 const fileRows = collect(rerenderedDrawer, (node) => typeof node.type === 'string' && node.props.className === 'mo-row mo-row-file')
 if (fileRows.length !== 2) throw new Error(`expected two file rows, found ${fileRows.length}`)
 const headingButtons = collect(rerenderedDrawer, (node) => node.type === 'button' && node.props.title === 'H2 Details')
 if (headingButtons.length !== 2) throw new Error(`expected one "Details" heading per file, found ${headingButtons.length}`)
 headingButtons[1].props.onClick()
+await new Promise((resolve) => setTimeout(resolve, 0))
 const openCall = opened[opened.length - 1]
 if (openCall === undefined || openCall[0] !== 'dsh-resource://file/session/sess-1/docs/second.md'
   || openCall[1]?.params?.line !== 10) {
@@ -356,7 +361,7 @@ if (!reloadedClasses.has('mo-md')) throw new Error('the document disappeared aft
 openTabsSnapshot = [{ sessionId: 'sess-1', tabId: 'tab-1', kind: 'markdown-outline', contentId: ADDRESS }]
 openTabsListeners.forEach((listener) => listener())
 await new Promise((resolve) => setTimeout(resolve, 0))
-const kept = drawerRegistration.component(props)
+const kept = pageRegistration.component(props)
 const keptRows = collect(kept, (node) => typeof node.type === 'string' && node.props.className === 'mo-row mo-row-file')
 if (keptRows.length !== 2) throw new Error(`closing a tab dropped its catalog row: ${keptRows.length} rows remain`)
 
@@ -385,7 +390,7 @@ const brs = collect(specialPanel, (node) => node.type === 'br')
 if (brs.length !== 1) throw new Error(`expected exactly one hard break, found ${brs.length}`)
 const emphasis = collect(specialPanel, (node) => node.type === 'em')
 if (emphasis.length !== 0) throw new Error(`intraword underscore turned into emphasis: ${emphasis.length}`)
-const specialChipRows = collect(drawerRegistration.component(props), (node) => typeof node.type === 'string' && node.props.className === 'mo-row mo-row-file')
+const specialChipRows = collect(pageRegistration.component(props), (node) => typeof node.type === 'string' && node.props.className === 'mo-row mo-row-file')
 if (specialChipRows.length !== 4) throw new Error(`the catalog did not grow to four files: ${specialChipRows.length}`)
 
 const emptyAddress = 'dsh-resource://file/session/sess-1/docs/empty.md'

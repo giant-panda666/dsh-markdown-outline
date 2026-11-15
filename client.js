@@ -57,8 +57,7 @@ window.__ModuleLoader__.load({
       'tree.expand': '展开',
       'tree.collapse': '收起',
       'action.refresh': '重新读取文件',
-      'action.drawerOpen': '打开大纲',
-      'action.drawerClose': '关闭大纲',
+      'outline.title': 'Markdown 大纲',
       'action.builtin': '用内置预览打开',
       'state.loading': '正在读取文件…',
       'state.empty': '这个 Markdown 文件没有内容。',
@@ -86,8 +85,7 @@ window.__ModuleLoader__.load({
       'tree.expand': 'Expand',
       'tree.collapse': 'Collapse',
       'action.refresh': 'Read the file again',
-      'action.drawerOpen': 'Open outline',
-      'action.drawerClose': 'Close outline',
+      'outline.title': 'Markdown outline',
       'action.builtin': 'Open in the built-in preview',
       'state.loading': 'Reading document…',
       'state.empty': 'This Markdown file has no content.',
@@ -1044,6 +1042,7 @@ window.__ModuleLoader__.load({
           map.set(tab.contentId, {
             address: tab.contentId,
             sessionId: file.sessionId,
+            sidebarSessionId: tab.sessionId,
             path: file.path,
             name: basenameOf(file.path),
             order: (order += 1),
@@ -1082,6 +1081,13 @@ window.__ModuleLoader__.load({
           if (map === undefined) return []
           return [...map.values()].sort((left, right) => left.order - right.order)
         },
+        entryOf(address) {
+          for (const map of sessions.values()) {
+            const entry = map.get(address)
+            if (entry !== undefined) return entry
+          }
+          return undefined
+        },
         allEntries() {
           const byAddress = new Map()
           for (const map of sessions.values()) {
@@ -1113,13 +1119,12 @@ window.__ModuleLoader__.load({
 
     /** Persisted panel preferences: outline visibility and collapsed tree nodes. */
     function createUiState() {
-      const initial = { drawerOpen: false, collapsed: {} }
+      const initial = { collapsed: {} }
       try {
         const raw = localStorage.getItem(UI_KEY)
         if (raw !== null && raw !== undefined) {
           const parsed = JSON.parse(raw)
           if (parsed !== null && typeof parsed === 'object') {
-            if (typeof parsed.drawerOpen === 'boolean') initial.drawerOpen = parsed.drawerOpen
             if (parsed.collapsed !== null && typeof parsed.collapsed === 'object') initial.collapsed = parsed.collapsed
           }
         }
@@ -1152,23 +1157,9 @@ window.__ModuleLoader__.load({
           const collapsed = { ...state.collapsed }
           if (collapsed[key] === true) delete collapsed[key]
           else collapsed[key] = true
-          state = { drawerOpen: state.drawerOpen, collapsed }
+          state = { collapsed }
           persist()
           publish()
-        },
-        toggleDrawer() {
-          state = { drawerOpen: !state.drawerOpen, collapsed: state.collapsed }
-          persist()
-          publish()
-        },
-        closeDrawer() {
-          if (!state.drawerOpen) return
-          state = { drawerOpen: false, collapsed: state.collapsed }
-          persist()
-          publish()
-        },
-        drawerState() {
-          return snapshot.drawerOpen
         },
         scrollOf(address) {
           const value = scrollPositions.get(address)
@@ -1241,6 +1232,12 @@ window.__ModuleLoader__.load({
           h('path', { d: 'M2.5 3.5h2M2.5 8h2M2.5 12.5h2', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round' }),
           h('path', { d: 'M6.5 3.5H13.5M7.5 8H13.5M7.5 12.5H13.5', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round' }),
           open ? null : h('path', { d: 'M11 1.5 14.5 8 11 14.5', fill: 'none', stroke: 'currentColor', strokeWidth: 1.2, opacity: 0.5 }))
+      },
+      outlineNav(size) {
+        const edge = typeof size === 'number' && size > 0 ? size : 18
+        return h('svg', { viewBox: '0 0 16 16', width: edge, height: edge, 'aria-hidden': true },
+          h('path', { d: 'M2.5 3.5h2M2.5 8h2M2.5 12.5h2', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round' }),
+          h('path', { d: 'M6.5 3.5H13.5M7.5 8H13.5M7.5 12.5H13.5', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round' }))
       },
       refresh() {
         return h('svg', { viewBox: '0 0 16 16', width: 14, height: 14, 'aria-hidden': true },
@@ -1485,7 +1482,6 @@ window.__ModuleLoader__.load({
       const tab = info.tab
       const address = tab.contentId
       const meta = useResource(address)
-      const uiSnapshot = useSyncExternalStore(ui.subscribe, ui.getSnapshot)
       const file = parseSessionAddress(address)
       const rootRef = useRef(null)
       const scrollRef = useRef(null)
@@ -1674,11 +1670,6 @@ window.__ModuleLoader__.load({
         h('style', null, CSS),
         h('div', { className: 'mo-main' },
           h('div', { className: 'mo-head' },
-            h(IconButton, {
-              onClick: ui.toggleDrawer,
-              title: uiSnapshot.drawerOpen ? t('action.drawerClose') : t('action.drawerOpen'),
-              active: uiSnapshot.drawerOpen,
-            }, SVG.outline(uiSnapshot.drawerOpen)),
             h('div', { className: 'mo-heading' },
               h('span', { className: 'mo-title', title: displayPath }, title),
               h('span', { className: 'mo-sub', title: displayPath }, displayPath)),
@@ -1693,45 +1684,55 @@ window.__ModuleLoader__.load({
      * plugin has opened, grouped by workspace, Session, file, and heading. The
      * document keeps the right Sidebar to itself.
      */
-    function OutlineDrawer(props) {
+    /**
+     * Open one outline row in its Session's right Sidebar. A main page has no
+     * Session on screen, so the file's Sidebar Session is selected first and
+     * the open runs once that selection has landed.
+     * @param address - resource address.
+     * @param line - optional 1-based source line to reveal.
+     */
+    function openOutlineFile(address, line) {
+      const entry = catalog.entryOf(address)
+      if (entry === undefined) return
+      try {
+        pluginCtx.uiWorkspace.openSession(entry.sidebarSessionId)
+      } catch (_unavailable) { /* The Session may have been deleted. */ }
+      try {
+        // Back to the conversation so the right Sidebar has a Session to open in.
+        pluginCtx.layout.selectPanel('conversation')
+      } catch (_unavailable) { /* The panel selection is owned by the shell. */ }
+      const open = () => {
+        try {
+          pluginCtx.sidebarRight.openResource(address, line === undefined ? undefined : { params: { line } })
+        } catch (_unavailable) { /* Nothing is on screen to open beside. */ }
+      }
+      setTimeout(open, 0)
+    }
+
+    /**
+     * The Markdown outline page, reached from the left Sidebar's panel list the
+     * same way the other feature pages are. It lists every Markdown file this
+     * plugin has opened, grouped by workspace, Session, file, and headings;
+     * picking one opens its document in the right Sidebar.
+     */
+    function OutlinePage(props) {
       const { useWorkspaces, useSessions, t: localeT } = props
       const fallbackSelector = useCallback(() => undefined, [])
       const useWs = typeof useWorkspaces === 'function' ? useWorkspaces : fallbackSelector
       const useSe = typeof useSessions === 'function' ? useSessions : fallbackSelector
       const t = typeof localeT === 'function' ? localeT : boundT
-      const uiSnapshot = useSyncExternalStore(ui.subscribe, ui.getSnapshot)
       const catalogSnapshot = useSyncExternalStore(catalog.subscribe, catalog.getSnapshot)
       const workspaces = useWs((state) => (state === undefined ? undefined : state.items))
       const sessionsById = useSe((state) => (state === undefined ? undefined : state.byId))
-      const open = uiSnapshot.drawerOpen
-
-      useEffect(() => {
-        if (!open) return undefined
-        const onKey = (event) => {
-          if (event.key === 'Escape') ui.closeDrawer()
-        }
-        window.addEventListener('keydown', onKey)
-        return () => window.removeEventListener('keydown', onKey)
-      }, [open])
 
       const groups = useMemo(
         () => groupOutline(catalog.allEntries(), workspaces, sessionsById, t),
         [catalogSnapshot.revision, workspaces, sessionsById, t],
       )
 
-      if (!open) return null
-
-      const openFile = (address) => {
-        try {
-          pluginCtx.sidebarRight.openResource(address)
-        } catch (_unavailable) { /* No on-screen Session: nothing to open beside. */ }
-      }
-      const openHeading = (address, line) => {
-        try {
-          pluginCtx.sidebarRight.openResource(address, { params: { line } })
-        } catch (_unavailable) { /* No on-screen Session: nothing to open beside. */ }
-      }
-      return h('div', { className: 'mo-drawer', role: 'dialog', 'aria-label': t('tree.title') },
+      const openFile = (address) => openOutlineFile(address)
+      const openHeading = (address, line) => openOutlineFile(address, line)
+      return h('div', { className: 'mo-page' },
         h('style', null, CSS),
         h(OutlineRail, {
           groups,
@@ -1748,15 +1749,13 @@ window.__ModuleLoader__.load({
           },
           width: '100%',
           fileCount: groups.reduce((total, group) => total + group.fileCount, 0),
-          onClose: ui.closeDrawer,
           labels: {
-            title: t('tree.title'),
+            title: t('outline.title'),
             count: t('tree.count'),
             empty: t('tree.empty'),
             loading: t('tree.loading'),
             expand: t('tree.expand'),
             collapse: t('tree.collapse'),
-            close: t('action.drawerClose'),
           },
         }))
     }
@@ -1798,11 +1797,13 @@ window.__ModuleLoader__.load({
 .mo-tree-count{margin-left:auto;padding-left:8px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .mo-tree-scroll{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;padding:6px 4px 16px;scrollbar-width:thin;scrollbar-color:var(--dsw-alias-scrollbar-bg-l2) transparent}
 .mo-tree-empty{margin:12px 10px;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}
-.mo-drawer{position:fixed;left:0;top:44px;bottom:0;z-index:60;display:flex;flex-direction:column;width:320px;min-height:0;overflow:hidden;pointer-events:auto;background:var(--dsw-alias-bg-base);border-right:.5px solid var(--dsw-alias-border-l2);box-shadow:0 12px 32px rgb(0 0 0 / 22%)}
-.mo-drawer .mo-tree{width:100%;flex:1 1 auto;border-right:0}
-.mo-tree-close{display:inline-flex;flex:0 0 auto;align-items:center;justify-content:center;width:18px;height:18px;margin-left:4px;padding:0;border:0;border-radius:var(--dsw-radius-xs, 4px);background:none;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:14px;line-height:1;cursor:pointer}
-.mo-tree-close:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
-.mo-tree-close:focus-visible{outline:none;box-shadow:0 0 0 2px var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary))}
+.mo-page{display:flex;flex-direction:column;width:100%;height:100%;min-height:0;overflow:hidden;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:var(--dsw-font-markdown-base)}
+.mo-page .mo-tree{width:100%;flex:1 1 auto;min-height:0;border-right:0}
+.mo-page .mo-tree-head{height:44px;padding:0 24px;font-size:12px}
+.mo-page .mo-tree-scroll{width:100%;max-width:900px;margin:0 auto;padding:8px 24px 32px}
+.mo-page .mo-row{padding-top:5px;padding-bottom:5px}
+.mo-page .mo-row-workspace{font-size:13px}
+.mo-page .mo-row-session,.mo-page .mo-row-file,.mo-page .mo-row-heading{font-size:13px;line-height:20px}
 .mo-row{display:flex;align-items:center;gap:4px;box-sizing:border-box;width:100%;min-width:0;margin:0;padding:4px 8px 4px 6px;border:0;border-radius:var(--dsw-radius-sm);background:none;color:inherit;font:inherit;text-align:left;cursor:pointer;-webkit-appearance:none;appearance:none}
 .mo-row:hover{background:var(--dsw-alias-bg-layer-2)}
 .mo-row:focus-visible{outline:none;box-shadow:0 0 0 2px var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary))}
@@ -1906,7 +1907,7 @@ window.__ModuleLoader__.load({
     // -------------------------------------------------------------- plugin
 
     /** Client services this plugin requires before it activates. */
-    const inject = ['slots', 'locale', 'sidebarRightTabs', 'sidebarRight', 'remote', 'remote.workspaceFiles']
+    const inject = ['slots', 'locale', 'sidebarRightTabs', 'sidebarRight', 'remote', 'remote.workspaceFiles', 'uiWorkspace', 'layout']
 
     let catalog
     let ui
@@ -1949,12 +1950,18 @@ window.__ModuleLoader__.load({
         { name: 'sidebar.right.pane.tab.title', key: ID },
         MarkdownTitle,
       )), 'markdown-outline: tab title')
-      ctx.effect(() => ctx.slots.inject('shell.overlay', () => ctx.slots.register({
-        name: 'shell.overlay',
-        id: 'markdown-outline-drawer',
-        order: 20,
+      ctx.effect(() => ctx.slots.inject('main', () => ctx.slots.register({
+        name: 'main',
+        key: ID,
         locale: NS,
-      }, OutlineDrawer)), 'markdown-outline: outline drawer')
+      }, OutlinePage)), 'markdown-outline: outline page')
+      ctx.effect(() => ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
+        name: 'sidebar.panellist',
+        id: ID,
+        order: 40,
+        label: () => boundT('outline.title'),
+        locale: NS,
+      }, (props) => SVG.outlineNav(typeof props.size === 'number' ? props.size : 18))), 'markdown-outline: sidebar entry')
       ctx.effect(() => {
         const unsubscribe = ctx.sidebarRight.openTabs.subscribe(() => { catalog.sync() })
         catalog.sync()
