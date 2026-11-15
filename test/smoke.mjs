@@ -111,6 +111,7 @@ let openTabsSnapshot = []
 const openTabsListeners = []
 const disposeFns = []
 const sessionOpens = []
+const panelSelects = []
 let readCalls = 0
 
 const ctx = {
@@ -153,6 +154,9 @@ const ctx = {
   },
   uiWorkspace: {
     openSession(id) { sessionOpens.push(id) },
+  },
+  layout: {
+    selectPanel(id) { panelSelects.push(id) },
   },
   remote: {
     workspaceFiles: {
@@ -328,7 +332,8 @@ await new Promise((resolve) => setTimeout(resolve, 0))
 const rerenderedDrawer = pageRegistration.component(props)
 const fileRows = collect(rerenderedDrawer, (node) => typeof node.type === 'string' && node.props.className === 'mo-row mo-row-file')
 if (fileRows.length !== 2) throw new Error(`expected two file rows, found ${fileRows.length}`)
-const fileBodies = collect(rerenderedDrawer, (node) => node.type === 'button' && node.props.className === 'mo-rowbody')
+const fileRowContainers = collect(rerenderedDrawer, (node) => typeof node.type === 'string' && node.props.className === 'mo-row mo-row-file')
+const fileBodies = fileRowContainers.flatMap((row) => collect(row, (node) => node.type === 'button' && node.props.className === 'mo-rowbody'))
 if (fileBodies.length !== 2) throw new Error(`expected two file open buttons, found ${fileBodies.length}`)
 fileBodies[1].props.onClick()
 const afterSelect = pageRegistration.component(props)
@@ -344,6 +349,13 @@ if (!docTitles.some((title) => title.includes('second.md'))) throw new Error(`th
 const openCall = undefined
 
 // The tab chip renders the markdown glyph before the captured title.
+// The session row carries a back control that returns to its conversation.
+const backButtons = collect(drawer, (node) => node.type === 'button' && node.props.title === 'action.backToSession')
+if (backButtons.length === 0) throw new Error('the session row has no back-to-session control')
+backButtons[0].props.onClick({ stopPropagation() {} })
+if (!sessionOpens.includes('sess-1')) throw new Error(`back-to-session did not open the Session: ${JSON.stringify(sessionOpens)}`)
+if (!panelSelects.includes('conversation')) throw new Error(`back-to-session did not select the conversation: ${JSON.stringify(panelSelects)}`)
+
 const chip = titleRegistration.component({ useTabInfo: props.useTabInfo })
 const chipText = (chip.children || []).filter((child) => typeof child === 'string')
 if (!chipText.join('').includes('demo.md')) throw new Error(`title component did not include the tab title: ${JSON.stringify(chipText)}`)

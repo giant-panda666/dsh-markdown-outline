@@ -57,7 +57,8 @@ window.__ModuleLoader__.load({
       'tree.expand': '展开',
       'tree.collapse': '收起',
       'action.refresh': '重新读取文件',
-      'outline.title': 'Markdown 大纲',
+      'outline.title': 'Markdown 预览',
+      'action.backToSession': '回到会话',
       'action.builtin': '用内置预览打开',
       'state.loading': '正在读取文件…',
       'state.empty': '这个 Markdown 文件没有内容。',
@@ -85,7 +86,8 @@ window.__ModuleLoader__.load({
       'tree.expand': 'Expand',
       'tree.collapse': 'Collapse',
       'action.refresh': 'Read the file again',
-      'outline.title': 'Markdown outline',
+      'outline.title': 'Markdown preview',
+      'action.backToSession': 'Back to session',
       'action.builtin': 'Open in the built-in preview',
       'state.loading': 'Reading document…',
       'state.empty': 'This Markdown file has no content.',
@@ -1243,6 +1245,10 @@ window.__ModuleLoader__.load({
           h('path', { d: 'M6.5 3.5H13.5M7.5 8H13.5M7.5 12.5H13.5', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round' }),
           open ? null : h('path', { d: 'M11 1.5 14.5 8 11 14.5', fill: 'none', stroke: 'currentColor', strokeWidth: 1.2, opacity: 0.5 }))
       },
+      back() {
+        return h('svg', { viewBox: '0 0 16 16', width: 13, height: 13, 'aria-hidden': true },
+          h('path', { d: 'M10 8H3.5M6.5 4.5 3 8l3.5 3.5', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round' }))
+      },
       outlineNav(size) {
         const edge = typeof size === 'number' && size > 0 ? size : 18
         return h('svg', { viewBox: '0 0 16 16', width: edge, height: edge, 'aria-hidden': true },
@@ -1289,7 +1295,7 @@ window.__ModuleLoader__.load({
     function OutlineRail(props) {
       const {
         groups, activeAddress, activeLine, collapsedOf, onToggleNode, onOpenFile, onOpenHeading,
-        headingsOf, loadingOf, width, fileCount, labels, onClose,
+        headingsOf, loadingOf, width, fileCount, labels, onClose, onOpenSession,
       } = props
       const rows = []
       const toggleLabel = (collapsed) => (collapsed ? labels.expand : labels.collapse)
@@ -1313,19 +1319,37 @@ window.__ModuleLoader__.load({
         for (const session of group.sessions) {
           const sessionKey = `s:${group.key}:${session.sessionId}`
           const sessionCollapsed = collapsedOf(sessionKey)
-          rows.push(h('button', {
+          rows.push(h('div', {
             key: sessionKey,
-            type: 'button',
             className: 'mo-row mo-row-session',
             style: { paddingLeft: 14 },
-            onClick: () => onToggleNode(sessionKey),
-            title: session.title,
-            'aria-expanded': !sessionCollapsed,
-            'aria-label': `${toggleLabel(sessionCollapsed)} ${session.title}`,
           },
-            h('span', { className: 'mo-chevronbox' }, SVG.chevron(sessionCollapsed ? undefined : 'open')),
-            SVG.session(),
-            h('span', { className: 'mo-row-label' }, session.title)))
+            h('button', {
+              type: 'button',
+              className: 'mo-rowtoggle',
+              onClick: () => onToggleNode(sessionKey),
+              title: toggleLabel(sessionCollapsed),
+              'aria-label': `${toggleLabel(sessionCollapsed)} ${session.title}`,
+              'aria-expanded': !sessionCollapsed,
+            }, h('span', { className: 'mo-chevronbox' }, SVG.chevron(sessionCollapsed ? undefined : 'open'))),
+            h('button', {
+              type: 'button',
+              className: 'mo-rowbody',
+              onClick: () => onToggleNode(sessionKey),
+              title: session.title,
+            },
+              SVG.session(),
+              h('span', { className: 'mo-row-label' }, session.title)),
+            onOpenSession === undefined ? null : h('button', {
+              type: 'button',
+              className: 'mo-rowaction',
+              onClick: (event) => {
+                event.stopPropagation()
+                onOpenSession(session.sessionId)
+              },
+              title: labels.backToSession,
+              'aria-label': labels.backToSession,
+            }, SVG.back())))
           if (sessionCollapsed) continue
           for (const entry of session.files) {
             const fileKey = `f:${entry.address}`
@@ -1666,6 +1690,14 @@ window.__ModuleLoader__.load({
 
       const openFile = (address) => ui.selectPage(address)
       const openHeading = (address, line) => ui.selectPage(address, line)
+      const openSession = (sessionId) => {
+        try {
+          pluginCtx.uiWorkspace.openSession(sessionId)
+        } catch (_unavailable) { /* The Session may have been deleted. */ }
+        try {
+          pluginCtx.layout.selectPanel('conversation')
+        } catch (_unavailable) { /* The shell owns the main panel. */ }
+      }
 
       return h('div', { className: 'mo-page' },
         h('style', null, CSS),
@@ -1685,6 +1717,7 @@ window.__ModuleLoader__.load({
             },
             width: '100%',
             fileCount: groups.reduce((total, group) => total + group.fileCount, 0),
+            onOpenSession: openSession,
             labels: {
               title: t('outline.title'),
               count: t('tree.count'),
@@ -1692,6 +1725,7 @@ window.__ModuleLoader__.load({
               loading: t('tree.loading'),
               expand: t('tree.expand'),
               collapse: t('tree.collapse'),
+              backToSession: t('action.backToSession'),
             },
           })),
         selected === undefined
@@ -1766,6 +1800,9 @@ window.__ModuleLoader__.load({
 .mo-row-label{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .mo-row-count{margin-left:auto;padding-left:6px;color:var(--dsw-alias-label-tertiary);font-size:10px;font-weight:500}
 .mo-row-badge{margin-left:auto;padding-left:6px;color:var(--dsw-alias-label-tertiary);font-size:10px}
+.mo-rowaction{display:inline-flex;flex:0 0 auto;align-items:center;justify-content:center;width:20px;height:20px;margin-left:auto;padding:0;border:0;border-radius:var(--dsw-radius-xs, 4px);background:none;color:var(--dsw-alias-label-tertiary);cursor:pointer}
+.mo-rowaction:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.mo-rowaction:focus-visible{outline:none;box-shadow:0 0 0 2px var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary))}
 .mo-row-dir{margin-left:auto;padding-left:6px;max-width:48%;overflow:hidden;color:var(--dsw-alias-label-tertiary);font-size:10px;white-space:nowrap;text-overflow:ellipsis}
 .mo-row-icon{flex:0 0 auto;color:var(--dsw-alias-label-tertiary)}
 .mo-row-icon-md{color:var(--dsw-alias-brand-primary)}
