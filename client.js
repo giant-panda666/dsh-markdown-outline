@@ -1763,7 +1763,7 @@ window.__ModuleLoader__.load({
 .mo-tree-head{display:flex;flex:0 0 auto;align-items:center;gap:8px;box-sizing:border-box;height:38px;padding:0 10px 0 12px;border-bottom:.5px solid var(--dsw-alias-border-l3);color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;letter-spacing:.02em;text-transform:uppercase}
 .mo-tree-title{font-weight:600;color:var(--dsw-alias-label-secondary);white-space:nowrap}
 .mo-tree-count{margin-left:auto;padding-left:8px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.mo-tree-scroll{flex:1 1 auto;min-height:0;overflow:auto;padding:6px 4px 16px;scrollbar-width:thin;scrollbar-color:var(--dsw-alias-scrollbar-bg-l2) transparent}
+.mo-tree-scroll{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;padding:6px 4px 16px;scrollbar-width:thin;scrollbar-color:var(--dsw-alias-scrollbar-bg-l2) transparent}
 .mo-tree-empty{margin:12px 10px;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}
 .mo-row{display:flex;align-items:center;gap:4px;box-sizing:border-box;width:100%;min-width:0;margin:0;padding:4px 8px 4px 6px;border:0;border-radius:var(--dsw-radius-sm);background:none;color:inherit;font:inherit;text-align:left;cursor:pointer;-webkit-appearance:none;appearance:none}
 .mo-row:hover{background:var(--dsw-alias-bg-layer-2)}
@@ -1802,7 +1802,7 @@ window.__ModuleLoader__.load({
 .mo-iconbtn:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 .mo-iconbtn:focus-visible{outline:none;box-shadow:0 0 0 2px var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary))}
 .mo-iconbtn[data-active='true']{color:var(--dsw-alias-label-primary)}
-.mo-scroll{position:relative;flex:1 1 auto;min-height:0;overflow:auto;overflow-anchor:none;scrollbar-width:thin;scrollbar-color:var(--dsw-alias-scrollbar-bg-l2) transparent}
+.mo-scroll{position:relative;flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;overflow-anchor:none;scrollbar-width:thin;scrollbar-color:var(--dsw-alias-scrollbar-bg-l2) transparent}
 .mo-scroll:focus{outline:none}
 .mo-doc{position:relative;box-sizing:border-box;min-width:0;max-width:860px;margin:0 auto;padding:16px 16px 48px}
 .mo-state{display:flex;flex:1 1 auto;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:32px 20px;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;text-align:center}
