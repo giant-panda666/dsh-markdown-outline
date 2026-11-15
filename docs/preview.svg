@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 300" width="640" height="300" role="img" aria-label="A right Sidebar panel: an outline tree of workspace, session, file and headings on the left, the rendered Markdown document on the right, with the current heading highlighted in both.">
+  <rect width="640" height="300" fill="#F5F6F8"/>
+  <rect x="32" y="24" width="576" height="252" rx="14" fill="#FFFFFF" stroke="#E1E4EA"/>
+  <path d="M32 38a14 14 0 0 1 14-14h548a14 14 0 0 1 14 14v22H32z" fill="#FAFBFC"/>
+  <path d="M32 60h576" stroke="#E1E4EA"/>
+  <rect x="48" y="38" width="46" height="14" rx="7" fill="#DFE4F6"/>
+  <rect x="102" y="38" width="30" height="14" rx="7" fill="#EDEFF4"/>
+  <circle cx="552" cy="45" r="9" fill="#EDEFF4"/>
+  <circle cx="578" cy="45" r="9" fill="#EDEFF4"/>
+  <path d="M32 60v214a14 14 0 0 0 14 14h0V60z" fill="#FBFBFC"/>
+  <path d="M228 60v214" stroke="#E1E4EA"/>
+  <g>
+    <rect x="48" y="76" width="12" height="12" rx="3" fill="#4D6BFE"/>
+    <rect x="68" y="78" width="86" height="9" rx="4.5" fill="#3F4550"/>
+    <rect x="62" y="98" width="10" height="10" rx="3" fill="#B9C0CC"/>
+    <rect x="80" y="99" width="70" height="8" rx="4" fill="#7B828E"/>
+    <rect x="76" y="116" width="8" height="8" rx="2.5" fill="#DFE4F6"/>
+    <rect x="92" y="116" width="92" height="8" rx="4" fill="#4D6BFE"/>
+    <rect x="100" y="134" width="70" height="7" rx="3.5" fill="#AEB5C0"/>
+    <rect x="100" y="150" width="86" height="7" rx="3.5" fill="#AEB5C0"/>
+    <rect x="100" y="166" width="58" height="7" rx="3.5" fill="#AEB5C0"/>
+    <rect x="100" y="182" width="78" height="7" rx="3.5" fill="#AEB5C0"/>
+    <rect x="76" y="202" width="8" height="8" rx="2.5" fill="#DFE4F6"/>
+    <rect x="92" y="202" width="76" height="8" rx="4" fill="#7B828E"/>
+    <rect x="62" y="224" width="10" height="10" rx="3" fill="#B9C0CC"/>
+    <rect x="80" y="225" width="62" height="8" rx="4" fill="#7B828E"/>
+    <rect x="76" y="242" width="8" height="8" rx="2.5" fill="#DFE4F6"/>
+    <rect x="92" y="242" width="84" height="8" rx="4" fill="#7B828E"/>
+  </g>
+  <rect x="244" y="60" width="364" height="214" fill="#FFFFFF"/>
+  <g fill="#3F4550">
+    <rect x="268" y="82" width="196" height="13" rx="4"/>
+  </g>
+  <g fill="#7B828E">
+    <rect x="268" y="108" width="300" height="8" rx="4"/>
+    <rect x="268" y="124" width="284" height="8" rx="4"/>
+    <rect x="268" y="140" width="252" height="8" rx="4"/>
+  </g>
+  <rect x="268" y="164" width="316" height="52" rx="8" fill="#F3F5FA" stroke="#E1E4EA"/>
+  <g fill="#8FA5FF">
+    <rect x="284" y="178" width="120" height="7" rx="3.5"/>
+    <rect x="284" y="194" width="164" height="7" rx="3.5"/>
+  </g>
+  <g fill="#3F4550">
+    <rect x="268" y="234" width="148" height="11" rx="4"/>
+  </g>
+  <g fill="#7B828E">
+    <rect x="268" y="256" width="292" height="8" rx="4"/>
+  </g>
+</svg>

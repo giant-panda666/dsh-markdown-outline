@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Markdown outline preview",
+    "description": "Claims Markdown file links in the right Sidebar and shows them as a document with an outline tree: workspace, session, file, then every heading. Clicking a heading jumps in the document, clicking another file switches the document, and the content reloads itself when the file changes on disk.",
+    "detail": "docs/DETAIL.md"
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "name": "dsh-markdown-outline",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Markdown preview with a workspace / session / file / heading outline in the DSH right Sidebar.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "docs",
+    "icon.svg",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  },
+  "license": "MIT",
+  "scripts": {
+    "check": "node --check client.js && node test/smoke.mjs",
+    "test": "node test/smoke.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/giant-panda666/dsh-markdown-outline.git"
+  },
+  "homepage": "https://github.com/giant-panda666/dsh-markdown-outline#readme",
+  "bugs": {
+    "url": "https://github.com/giant-panda666/dsh-markdown-outline/issues"
+  }
+}
