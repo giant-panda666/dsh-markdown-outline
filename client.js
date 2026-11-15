@@ -1481,219 +1481,28 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * The right-Sidebar document. It draws the Markdown file alone; the outline
-     * lives in the left drawer, so the preview is one unbroken reading column.
+     * A Markdown link opened from a conversation asks for a reading pane; the
+     * outline page is that pane now, so this tab hands the file to the page and
+     * closes itself instead of duplicating the document beside the chat.
      */
-    function MarkdownPanel(props) {
-      const { useTabInfo, useResource, t: localeT } = props
-      const t = typeof localeT === 'function' ? localeT : boundT
-
+    function MarkdownLinkRedirect({ useTabInfo }) {
       const info = useTabInfo()
       const tab = info.tab
       const address = tab.contentId
-      const meta = useResource(address)
-      const file = parseSessionAddress(address)
-      const rootRef = useRef(null)
-      const scrollRef = useRef(null)
-      const [flash, setFlash] = useState(false)
-
-      const doc = catalog.docOf(address)
-      const headings = catalog.headingsOf(address)
-      const fileVersion = meta !== undefined && meta !== null && meta.value !== undefined ? meta.value.version : undefined
-
+      const params = tab.navigation === undefined ? undefined : tab.navigation.params
+      const line = params !== undefined && params !== null && typeof params.line === 'number' ? params.line : undefined
       useEffect(() => {
-        catalog.observe(address, meta)
-      }, [address, meta])
-
-      useEffect(() => {
-        catalog.ensure(address)
-      }, [address])
-
-      useEffect(() => {
-        if (fileVersion !== undefined) catalog.ensure(address)
-      }, [address, fileVersion])
-
-      // The reading position belongs to the file address, not to this mounted
-      // body: it survives switching to another file and back.
-      useEffect(() => {
-        const element = scrollRef.current
-        if (element === null) return
-        const top = ui.scrollOf(address)
-        if (Math.abs(element.scrollTop - top) > 2) element.scrollTop = top
-      }, [address, doc === undefined ? undefined : doc.version])
-
-      // A short lived notice when a version change replaced visible content.
-      const shownVersion = useRef(undefined)
-      useEffect(() => {
-        const version = doc === undefined ? undefined : doc.version
-        const hadVersion = shownVersion.current !== undefined
-        shownVersion.current = version
-        if (!hadVersion || version === undefined) return undefined
-        setFlash(true)
-        const timer = setTimeout(() => setFlash(false), 1800)
-        return () => clearTimeout(timer)
-      }, [doc === undefined ? undefined : doc.version])
-
-      // Line navigation from `openResource(address, { params: { line } })`.
-      useEffect(() => {
-        const params = tab.navigation === undefined ? undefined : tab.navigation.params
-        const line = params !== undefined && params !== null && typeof params.line === 'number' ? params.line : undefined
-        if (line === undefined || scrollRef.current === null) return
-        const element = scrollRef.current
-        const target = element.querySelector(`[data-md-line="${line}"]`)
-        if (target !== null) {
-          element.scrollTop = Math.max(0, target.offsetTop - 12)
-          if (typeof element.focus === 'function') element.focus({ preventScroll: true })
-        }
-      }, [tab.navigation === undefined ? undefined : tab.navigation.revision, doc === undefined ? undefined : doc.version])
-
-      const resolveImage = useCallback((destination) => {
-        if (typeof destination !== 'string' || destination.length === 0) return undefined
-        const suffix = destination.search(/[?#]/)
-        let raw
+        ui.selectPage(address, line)
         try {
-          raw = decodeURIComponent(suffix === -1 ? destination : destination.slice(0, suffix))
-        } catch (_malformed) {
-          return undefined
-        }
-        if (/^[a-z][a-z\d+.-]*:/i.test(raw) || raw.startsWith('//')) {
-          return /^(?:https?):/i.test(raw) ? raw : undefined
-        }
-        const absolutePath = meta !== undefined && meta !== null && meta.value !== undefined
-          ? meta.value.absolutePath
-          : doc === undefined ? undefined : doc.absolutePath
-        let resolved
-        if (raw.startsWith('/')) resolved = raw
-        else if (absolutePath !== undefined) resolved = dirnameOf(absolutePath) + raw
-        else if (file !== undefined) resolved = dirnameOf(file.path) + raw
-        if (resolved === undefined) return undefined
+          pluginCtx.layout.selectPanel(ID)
+        } catch (_unavailable) { /* The shell owns the main panel. */ }
         try {
-          return new URL(`api/file?path=${encodeURIComponent(resolved)}`, document.baseURI).href
-        } catch (_unavailable) {
-          return undefined
-        }
-      }, [meta, doc, file])
-
-      const scrollToLine = useCallback((line) => {
-        const element = scrollRef.current
-        if (element === null) return
-        const target = element.querySelector(`[data-md-line="${line}"]`)
-        if (target === null) return
-        element.scrollTop = Math.max(0, target.offsetTop - 12)
-        if (typeof element.focus === 'function') element.focus({ preventScroll: true })
-      }, [])
-
-      const openLink = useCallback((href, event) => {
-        if (typeof href !== 'string' || href.length === 0) return
-        if (href.startsWith('#')) {
-          if (href.length > 1) {
-            const slug = href.slice(1).toLowerCase()
-            const found = headings === undefined ? undefined : headings.find((heading) => slugify(heading.text) === slug)
-            if (found !== undefined) scrollToLine(found.line)
-          }
-          return
-        }
-        if (/^(?:https?|mailto):/i.test(href)) {
-          try {
-            window.open(href, '_blank', 'noopener')
-          } catch (_blocked) { /* A blocked popup leaves the link inert. */ }
-          return
-        }
-        if (file === undefined) return
-        const base = dirnameOf(file.path)
-        const resolved = resolveRelativePath(base, href)
-        if (resolved === undefined) return
-        tab.actions.openResource(sessionFileAddress(file.sessionId, resolved))
-      }, [file, headings, scrollToLine, tab.actions])
-
-      const onScroll = useCallback((event) => {
-        ui.rememberScroll(address, event.currentTarget.scrollTop)
+          tab.actions.close()
+        } catch (_unavailable) { /* The record may already be gone. */ }
       }, [address])
-
-      const refresh = useCallback(() => {
-        catalog.reload(address)
-      }, [address])
-
-      // The page refresh command (shortcut and header reload) re-reads through us.
-      useEffect(() => tab.actions.bindCommands({ refresh }), [tab.actions, refresh])
-
-      const openBuiltin = useCallback(() => {
-        try {
-          pluginCtx.sidebarRight.openResource(address, { kind: 'text' })
-        } catch (_unavailable) {
-          catalog.reload(address)
-        }
-      }, [address])
-
-      const metaFailure = meta !== undefined && meta !== null && meta.status === 'failed' ? meta.failure : undefined
-      const failure = doc === undefined ? undefined : doc.error
-      const notice = failure === undefined ? metaFailure : failure
-      const labels = {
-        title: t('md.copy'),
-        copied: t('md.copied'),
-        language: t('md.language'),
-      }
-
-      const emptyState = h('div', { className: 'mo-state' }, h('span', null, t('state.empty')))
-      const errorState = (shownFailure) => h('div', { className: 'mo-state mo-state-error' },
-        h('p', { className: 'mo-error' }, errorCopy(t,
-          shownFailure === undefined ? undefined : shownFailure.code,
-          shownFailure === undefined ? undefined : shownFailure.message)),
-        h('button', { type: 'button', className: 'mo-button', onClick: refresh }, t('error.retry')))
-      const loadingState = h('div', { className: 'mo-state' },
-        h('span', { className: 'mo-spinner', 'aria-hidden': true }),
-        h('span', null, t('state.loading')))
-
-      const hasText = doc !== undefined && typeof doc.text === 'string' && doc.text.length > 0
-      let body
-      if (doc === undefined) {
-        body = metaFailure === undefined ? loadingState : errorState(metaFailure)
-      } else if (hasText) {
-        body = h('div', { className: 'mo-scroll', ref: scrollRef, onScroll, tabIndex: -1 },
-          doc.truncated === true ? h('p', { className: 'mo-note' }, t('state.truncated')) : null,
-          h('article', { className: 'mo-doc' },
-            h(MarkdownDocument, {
-              text: doc.text,
-              resolveImage,
-              openLink,
-              labels,
-              frontmatterLabel: t('md.frontmatter'),
-            })),
-          notice === undefined ? null : h('div', { className: 'mo-inline-error' },
-            h('span', null, errorCopy(t, notice.code, notice.message)),
-            h('button', { type: 'button', className: 'mo-button', onClick: refresh }, t('error.retry'))))
-      } else if (doc.status === 'error' || metaFailure !== undefined) {
-        body = errorState(notice)
-      } else if (doc.status === 'loading') {
-        body = loadingState
-      } else {
-        body = emptyState
-      }
-
-      const absolutePath = meta !== undefined && meta !== null && meta.value !== undefined
-        ? meta.value.absolutePath
-        : doc === undefined ? undefined : doc.absolutePath
-      const displayPath = absolutePath !== undefined ? absolutePath : file === undefined ? address : file.path
-      const title = file === undefined ? address : basenameOf(file.path)
-
-      return h('div', { className: 'mo-root', ref: rootRef },
-        h('style', null, CSS),
-        h('div', { className: 'mo-main' },
-          h('div', { className: 'mo-head' },
-            h('div', { className: 'mo-heading' },
-              h('span', { className: 'mo-title', title: displayPath }, title),
-              h('span', { className: 'mo-sub', title: displayPath }, displayPath)),
-            flash ? h('span', { className: 'mo-chip' }, t('state.updated')) : null,
-            h(IconButton, { onClick: refresh, title: t('action.refresh') }, SVG.refresh()),
-            h(IconButton, { onClick: openBuiltin, title: t('action.builtin') }, SVG.external())),
-          body))
+      return null
     }
 
-    /**
-     * The outline drawer: a left-edge overlay listing every Markdown file this
-     * plugin has opened, grouped by workspace, Session, file, and heading. The
-     * document keeps the right Sidebar to itself.
-     */
     /**
      * One document inside the outline page. The page owns the tree; this pane
      * reads the selected file through the shared catalog and the standard
@@ -2077,7 +1886,7 @@ window.__ModuleLoader__.load({
         name: 'sidebar.right.pane.tab',
         key: ID,
         locale: NS,
-      }, MarkdownPanel)), 'markdown-outline: tab body')
+      }, MarkdownLinkRedirect)), 'markdown-outline: tab body')
       ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register(
         { name: 'sidebar.right.pane.tab.title', key: ID },
         MarkdownTitle,

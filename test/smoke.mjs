@@ -222,7 +222,11 @@ const props = {
   t: (key) => key,
 }
 
-const rendered = componentRegistration.component(props)
+// The tab body only hands the file to the outline page and closes itself.
+const redirected = componentRegistration.component(props)
+if (redirected !== null) throw new Error('the tab body should render nothing and redirect')
+// The page then shows the file the redirect selected.
+const rendered = pageRegistration.component(props)
 
 function walk(node, visit) {
   if (node === null || node === undefined || typeof node === 'boolean') return
@@ -273,7 +277,7 @@ walk(rendered, (node) => {
   }
 })
 
-for (const expected of ['mo-root', 'mo-head', 'mo-scroll', 'mo-md']) {
+for (const expected of ['mo-page', 'mo-page-doc', 'mo-head', 'mo-scroll', 'mo-md']) {
   if (!classes.has(expected)) throw new Error(`the document panel is missing .${expected}`)
 }
 const drawer = pageRegistration.component(props)
@@ -346,13 +350,15 @@ if (!chipText.join('').includes('demo.md')) throw new Error(`title component did
 
 // A newer version of the open file re-reads it (the live-refresh path).
 const beforeReload = readCalls
-componentRegistration.component({
+const v2props = {
   ...props,
   useResource: () => ({ status: 'live', value: { absolutePath: '/ws/docs/demo.md', version: 'v2', bytes: 700 } }),
-})
+}
+// Deep expansion runs the nested document component's effects, as React would.
+walk(pageRegistration.component(v2props), () => {})
 await new Promise((resolve) => setTimeout(resolve, 0))
 if (readCalls <= beforeReload) throw new Error('a new file version did not re-read the document')
-const afterReload = componentRegistration.component({
+const afterReload = pageRegistration.component({
   ...props,
   useResource: () => ({ status: 'live', value: { absolutePath: '/ws/docs/demo.md', version: 'v2', bytes: 700 } }),
 })
@@ -382,9 +388,12 @@ await new Promise((resolve) => setTimeout(resolve, 0))
 const specialAddress = 'dsh-resource://file/session/sess-1/docs/special.md'
 const specialTab = { ...tab, id: 'tab-3', title: 'special.md', contentId: specialAddress,
   navigation: { address: specialAddress, params: undefined, revision: 0 } }
-const specialPanel = componentRegistration.component({
+componentRegistration.component({
   ...props,
   useTabInfo: () => ({ sidebar: { expanded: true }, panel: { id: 'pane-1', isFloating: false }, tab: specialTab }),
+})
+const specialPanel = pageRegistration.component({
+  ...props,
   useResource: () => ({ status: 'live', value: { absolutePath: '/ws/docs/special.md', version: 'v1' } }),
 })
 const specialHeadings = collect(specialPanel, (node) => typeof node.type === 'string' && /^h[1-6]$/.test(node.type))
@@ -401,9 +410,12 @@ if (specialChipRows.length !== 4) throw new Error(`the catalog did not grow to f
 const emptyAddress = 'dsh-resource://file/session/sess-1/docs/empty.md'
 const emptyTab = { ...tab, id: 'tab-4', title: 'empty.md', contentId: emptyAddress,
   navigation: { address: emptyAddress, params: undefined, revision: 0 } }
-const emptyPanel = componentRegistration.component({
+componentRegistration.component({
   ...props,
   useTabInfo: () => ({ sidebar: { expanded: true }, panel: { id: 'pane-1', isFloating: false }, tab: emptyTab }),
+})
+const emptyPanel = pageRegistration.component({
+  ...props,
   useResource: () => ({ status: 'live', value: { absolutePath: '/ws/docs/empty.md', version: 'v1' } }),
 })
 const emptyTexts = []
