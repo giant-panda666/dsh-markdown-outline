@@ -1119,7 +1119,7 @@ window.__ModuleLoader__.load({
 
     /** Persisted panel preferences: outline visibility and collapsed tree nodes. */
     function createUiState() {
-      const initial = { collapsed: {} }
+      const initial = { collapsed: {}, pageAddress: undefined, pageLine: undefined }
       try {
         const raw = localStorage.getItem(UI_KEY)
         if (raw !== null && raw !== undefined) {
@@ -1157,8 +1157,18 @@ window.__ModuleLoader__.load({
           const collapsed = { ...state.collapsed }
           if (collapsed[key] === true) delete collapsed[key]
           else collapsed[key] = true
-          state = { collapsed }
+          state = { ...state, collapsed }
           persist()
+          publish()
+        },
+        pageState() {
+          return snapshot.pageAddress
+        },
+        pageLine() {
+          return snapshot.pageLine
+        },
+        selectPage(address, line) {
+          state = { ...state, pageAddress: address, pageLine: line }
           publish()
         },
         scrollOf(address) {
@@ -1685,79 +1695,199 @@ window.__ModuleLoader__.load({
      * document keeps the right Sidebar to itself.
      */
     /**
-     * Open one outline row in its Session's right Sidebar. A main page has no
-     * Session on screen, so the file's Sidebar Session is selected first and
-     * the open runs once that selection has landed.
-     * @param address - resource address.
-     * @param line - optional 1-based source line to reveal.
+     * One document inside the outline page. The page owns the tree; this pane
+     * reads the selected file through the shared catalog and the standard
+     * resource hook, so it reloads when the file changes on disk.
      */
-    function openOutlineFile(address, line) {
-      const entry = catalog.entryOf(address)
-      if (entry === undefined) return
-      try {
-        pluginCtx.uiWorkspace.openSession(entry.sidebarSessionId)
-      } catch (_unavailable) { /* The Session may have been deleted. */ }
-      try {
-        // Back to the conversation so the right Sidebar has a Session to open in.
-        pluginCtx.layout.selectPanel('conversation')
-      } catch (_unavailable) { /* The panel selection is owned by the shell. */ }
-      const open = () => {
+    function PageDocument(props) {
+      const { address, useResource, t } = props
+      const meta = useResource(address)
+      const uiSnapshot = useSyncExternalStore(ui.subscribe, ui.getSnapshot)
+      const file = parseSessionAddress(address)
+      const scrollRef = useRef(null)
+      const doc = catalog.docOf(address)
+      const headings = catalog.headingsOf(address)
+      const version = meta !== undefined && meta !== null && meta.value !== undefined ? meta.value.version : undefined
+
+      useEffect(() => {
+        catalog.observe(address, meta)
+      }, [address, meta])
+
+      useEffect(() => {
+        catalog.ensure(address)
+      }, [address])
+
+      useEffect(() => {
+        if (version !== undefined) catalog.ensure(address)
+      }, [address, version])
+
+      // Reveal the line the tree asked for once the content is in place.
+      useEffect(() => {
+        const line = uiSnapshot.pageLine
+        const element = scrollRef.current
+        if (line === undefined || element === null) return
+        const target = element.querySelector(`[data-md-line="${line}"]`)
+        if (target !== null) element.scrollTop = Math.max(0, target.offsetTop - 12)
+      }, [address, uiSnapshot.pageLine, doc === undefined ? undefined : doc.version])
+
+      const resolveImage = useCallback((destination) => {
+        if (typeof destination !== 'string' || destination.length === 0) return undefined
+        const suffix = destination.search(/[?#]/)
+        let raw
         try {
-          pluginCtx.sidebarRight.openResource(address, line === undefined ? undefined : { params: { line } })
-        } catch (_unavailable) { /* Nothing is on screen to open beside. */ }
+          raw = decodeURIComponent(suffix === -1 ? destination : destination.slice(0, suffix))
+        } catch (_malformed) {
+          return undefined
+        }
+        if (/^[a-z][a-z\d+.-]*:/i.test(raw) || raw.startsWith('//')) {
+          return /^(?:https?):/i.test(raw) ? raw : undefined
+        }
+        const absolutePath = meta !== undefined && meta !== null && meta.value !== undefined
+          ? meta.value.absolutePath
+          : doc === undefined ? undefined : doc.absolutePath
+        let resolved
+        if (raw.startsWith('/')) resolved = raw
+        else if (absolutePath !== undefined) resolved = dirnameOf(absolutePath) + raw
+        else if (file !== undefined) resolved = dirnameOf(file.path) + raw
+        if (resolved === undefined) return undefined
+        try {
+          return new URL(`api/file?path=${encodeURIComponent(resolved)}`, document.baseURI).href
+        } catch (_unavailable) {
+          return undefined
+        }
+      }, [meta, doc, file])
+
+      const scrollToLine = useCallback((line) => {
+        const element = scrollRef.current
+        if (element === null) return
+        const target = element.querySelector(`[data-md-line="${line}"]`)
+        if (target !== null) element.scrollTop = Math.max(0, target.offsetTop - 12)
+      }, [])
+
+      const openLink = useCallback((href) => {
+        if (typeof href !== 'string' || href.length === 0) return
+        if (href.startsWith('#')) {
+          if (href.length > 1) {
+            const slug = href.slice(1).toLowerCase()
+            const found = headings === undefined ? undefined : headings.find((heading) => slugify(heading.text) === slug)
+            if (found !== undefined) scrollToLine(found.line)
+          }
+          return
+        }
+        if (/^(?:https?|mailto):/i.test(href)) {
+          try {
+            window.open(href, '_blank', 'noopener')
+          } catch (_blocked) { /* A blocked popup leaves the link inert. */ }
+          return
+        }
+        if (file === undefined) return
+        const resolved = resolveRelativePath(dirnameOf(file.path), href)
+        if (resolved === undefined) return
+        ui.selectPage(sessionFileAddress(file.sessionId, resolved))
+      }, [file, headings, scrollToLine])
+
+      const metaFailure = meta !== undefined && meta !== null && meta.status === 'failed' ? meta.failure : undefined
+      const failure = doc === undefined ? undefined : doc.error
+      const notice = failure === undefined ? metaFailure : failure
+      const labels = { title: t('md.copy'), copied: t('md.copied'), language: t('md.language') }
+
+      const absolutePath = meta !== undefined && meta !== null && meta.value !== undefined
+        ? meta.value.absolutePath
+        : doc === undefined ? undefined : doc.absolutePath
+      const displayPath = absolutePath !== undefined ? absolutePath : file === undefined ? address : file.path
+      const title = file === undefined ? address : basenameOf(file.path)
+
+      let body
+      const hasText = doc !== undefined && typeof doc.text === 'string' && doc.text.length > 0
+      if (doc === undefined) {
+        body = metaFailure === undefined
+          ? h('div', { className: 'mo-state' }, h('span', { className: 'mo-spinner', 'aria-hidden': true }), h('span', null, t('state.loading')))
+          : h('div', { className: 'mo-state mo-state-error' },
+            h('p', { className: 'mo-error' }, errorCopy(t, metaFailure.code, metaFailure.message)))
+      } else if (hasText) {
+        body = h('div', { className: 'mo-scroll', ref: scrollRef, tabIndex: -1 },
+          doc.truncated === true ? h('p', { className: 'mo-note' }, t('state.truncated')) : null,
+          h('article', { className: 'mo-doc' },
+            h(MarkdownDocument, { text: doc.text, resolveImage, openLink, labels, frontmatterLabel: t('md.frontmatter') })),
+          notice === undefined ? null : h('div', { className: 'mo-inline-error' },
+            h('span', null, errorCopy(t, notice.code, notice.message))))
+      } else if (doc.status === 'error' || metaFailure !== undefined) {
+        body = h('div', { className: 'mo-state mo-state-error' },
+          h('p', { className: 'mo-error' }, errorCopy(t, notice === undefined ? undefined : notice.code, notice === undefined ? undefined : notice.message)))
+      } else {
+        body = h('div', { className: 'mo-state' }, h('span', null, t('state.empty')))
       }
-      setTimeout(open, 0)
+
+      return h('section', { className: 'mo-page-doc' },
+        h('div', { className: 'mo-head' },
+          h('div', { className: 'mo-heading' },
+            h('span', { className: 'mo-title', title: displayPath }, title),
+            h('span', { className: 'mo-sub', title: displayPath }, displayPath))),
+        body)
     }
 
     /**
-     * The Markdown outline page, reached from the left Sidebar's panel list the
-     * same way the other feature pages are. It lists every Markdown file this
-     * plugin has opened, grouped by workspace, Session, file, and headings;
-     * picking one opens its document in the right Sidebar.
+     * The Markdown outline page: the left Sidebar entry opens it, the tree sits
+     * on the left under the "Markdown 大纲" title, and the selected file's
+     * content fills the right pane. Directory rows collapse like a file tree.
      */
     function OutlinePage(props) {
-      const { useWorkspaces, useSessions, t: localeT } = props
+      const { useWorkspaces, useSessions, useResource, t: localeT } = props
       const fallbackSelector = useCallback(() => undefined, [])
       const useWs = typeof useWorkspaces === 'function' ? useWorkspaces : fallbackSelector
       const useSe = typeof useSessions === 'function' ? useSessions : fallbackSelector
       const t = typeof localeT === 'function' ? localeT : boundT
       const catalogSnapshot = useSyncExternalStore(catalog.subscribe, catalog.getSnapshot)
+      const uiSnapshot = useSyncExternalStore(ui.subscribe, ui.getSnapshot)
       const workspaces = useWs((state) => (state === undefined ? undefined : state.items))
       const sessionsById = useSe((state) => (state === undefined ? undefined : state.byId))
+      const selected = uiSnapshot.pageAddress
 
       const groups = useMemo(
         () => groupOutline(catalog.allEntries(), workspaces, sessionsById, t),
         [catalogSnapshot.revision, workspaces, sessionsById, t],
       )
 
-      const openFile = (address) => openOutlineFile(address)
-      const openHeading = (address, line) => openOutlineFile(address, line)
+      // Open the newest file when the page is shown without a selection.
+      useEffect(() => {
+        if (ui.pageState() !== undefined) return
+        const first = catalog.allEntries()[0]
+        if (first !== undefined) ui.selectPage(first.address)
+      }, [catalogSnapshot.revision])
+
+      const openFile = (address) => ui.selectPage(address)
+      const openHeading = (address, line) => ui.selectPage(address, line)
+
       return h('div', { className: 'mo-page' },
         h('style', null, CSS),
-        h(OutlineRail, {
-          groups,
-          activeAddress: undefined,
-          activeLine: undefined,
-          collapsedOf: ui.collapsed,
-          onToggleNode: ui.toggleNode,
-          onOpenFile: openFile,
-          onOpenHeading: openHeading,
-          headingsOf: (targetAddress) => catalog.headingsOf(targetAddress),
-          loadingOf: (targetAddress) => {
-            const cached = catalog.docOf(targetAddress)
-            return cached === undefined || cached.status === 'loading'
-          },
-          width: '100%',
-          fileCount: groups.reduce((total, group) => total + group.fileCount, 0),
-          labels: {
-            title: t('outline.title'),
-            count: t('tree.count'),
-            empty: t('tree.empty'),
-            loading: t('tree.loading'),
-            expand: t('tree.expand'),
-            collapse: t('tree.collapse'),
-          },
-        }))
+        h('div', { className: 'mo-page-rail' },
+          h(OutlineRail, {
+            groups,
+            activeAddress: selected,
+            activeLine: uiSnapshot.pageLine,
+            collapsedOf: ui.collapsed,
+            onToggleNode: ui.toggleNode,
+            onOpenFile: openFile,
+            onOpenHeading: openHeading,
+            headingsOf: (targetAddress) => catalog.headingsOf(targetAddress),
+            loadingOf: (targetAddress) => {
+              const cached = catalog.docOf(targetAddress)
+              return cached === undefined || cached.status === 'loading'
+            },
+            width: '100%',
+            fileCount: groups.reduce((total, group) => total + group.fileCount, 0),
+            labels: {
+              title: t('outline.title'),
+              count: t('tree.count'),
+              empty: t('tree.empty'),
+              loading: t('tree.loading'),
+              expand: t('tree.expand'),
+              collapse: t('tree.collapse'),
+            },
+          })),
+        selected === undefined
+          ? h('div', { className: 'mo-page-empty' }, h('span', null, t('tree.empty')))
+          : h(PageDocument, { key: selected, address: selected, useResource, t }))
     }
 
     /**
@@ -1797,13 +1927,15 @@ window.__ModuleLoader__.load({
 .mo-tree-count{margin-left:auto;padding-left:8px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .mo-tree-scroll{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;padding:6px 4px 16px;scrollbar-width:thin;scrollbar-color:var(--dsw-alias-scrollbar-bg-l2) transparent}
 .mo-tree-empty{margin:12px 10px;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}
-.mo-page{display:flex;flex-direction:column;width:100%;height:100%;min-height:0;overflow:hidden;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:var(--dsw-font-markdown-base)}
-.mo-page .mo-tree{width:100%;flex:1 1 auto;min-height:0;border-right:0}
-.mo-page .mo-tree-head{height:44px;padding:0 24px;font-size:12px}
-.mo-page .mo-tree-scroll{width:100%;max-width:900px;margin:0 auto;padding:8px 24px 32px}
-.mo-page .mo-row{padding-top:5px;padding-bottom:5px}
-.mo-page .mo-row-workspace{font-size:13px}
-.mo-page .mo-row-session,.mo-page .mo-row-file,.mo-page .mo-row-heading{font-size:13px;line-height:20px}
+.mo-page{display:flex;flex-direction:row;width:100%;height:100%;min-height:0;overflow:hidden;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:var(--dsw-font-markdown-base)}
+.mo-page-rail{display:flex;flex:0 0 auto;flex-direction:column;width:300px;min-width:0;min-height:0;border-right:.5px solid var(--dsw-alias-border-l1)}
+.mo-page-rail .mo-tree{width:100%;flex:1 1 auto;min-height:0;border-right:0}
+.mo-page-rail .mo-tree-head{height:44px;padding:0 16px;font-size:12px}
+.mo-page-rail .mo-tree-scroll{padding:8px 8px 24px}
+.mo-page-doc{display:flex;flex:1 1 auto;flex-direction:column;min-width:0;min-height:0}
+.mo-page-empty{display:flex;flex:1 1 auto;align-items:center;justify-content:center;color:var(--dsw-alias-label-tertiary);font-size:12px}
+.mo-page .mo-row-workspace{font-size:12.5px}
+.mo-page .mo-row-session,.mo-page .mo-row-file,.mo-page .mo-row-heading{font-size:12.5px;line-height:19px}
 .mo-row{display:flex;align-items:center;gap:4px;box-sizing:border-box;width:100%;min-width:0;margin:0;padding:4px 8px 4px 6px;border:0;border-radius:var(--dsw-radius-sm);background:none;color:inherit;font:inherit;text-align:left;cursor:pointer;-webkit-appearance:none;appearance:none}
 .mo-row:hover{background:var(--dsw-alias-bg-layer-2)}
 .mo-row:focus-visible{outline:none;box-shadow:0 0 0 2px var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary))}

@@ -324,15 +324,20 @@ await new Promise((resolve) => setTimeout(resolve, 0))
 const rerenderedDrawer = pageRegistration.component(props)
 const fileRows = collect(rerenderedDrawer, (node) => typeof node.type === 'string' && node.props.className === 'mo-row mo-row-file')
 if (fileRows.length !== 2) throw new Error(`expected two file rows, found ${fileRows.length}`)
-const headingButtons = collect(rerenderedDrawer, (node) => node.type === 'button' && node.props.title === 'H2 Details')
-if (headingButtons.length !== 2) throw new Error(`expected one "Details" heading per file, found ${headingButtons.length}`)
-headingButtons[1].props.onClick()
-await new Promise((resolve) => setTimeout(resolve, 0))
-const openCall = opened[opened.length - 1]
-if (openCall === undefined || openCall[0] !== 'dsh-resource://file/session/sess-1/docs/second.md'
-  || openCall[1]?.params?.line !== 10) {
-  throw new Error(`heading click did not navigate with a line and without replacing the tab: ${JSON.stringify(openCall)}`)
-}
+const fileBodies = collect(rerenderedDrawer, (node) => node.type === 'button' && node.props.className === 'mo-rowbody')
+if (fileBodies.length !== 2) throw new Error(`expected two file open buttons, found ${fileBodies.length}`)
+fileBodies[1].props.onClick()
+const afterSelect = pageRegistration.component(props)
+const pageClasses = new Set()
+walk(afterSelect, (node) => {
+  if (typeof node.type === 'string' && typeof node.props.className === 'string') node.props.className.split(/\s+/).forEach((name) => pageClasses.add(name))
+})
+if (!pageClasses.has('mo-page') || !pageClasses.has('mo-page-rail')) throw new Error('the outline page lost its tree rail')
+if (!pageClasses.has('mo-page-doc') || !pageClasses.has('mo-md')) throw new Error('selecting a tree row did not show the document')
+const docTitles = collect(afterSelect, (node) => typeof node.type === 'string' && node.props.className === 'mo-title')
+  .map((node) => node.children.join(''))
+if (!docTitles.some((title) => title.includes('second.md'))) throw new Error(`the document pane did not switch files: ${JSON.stringify(docTitles)}`)
+const openCall = undefined
 
 // The tab chip renders the markdown glyph before the captured title.
 const chip = titleRegistration.component({ useTabInfo: props.useTabInfo })
@@ -413,7 +418,6 @@ console.log(JSON.stringify({
   ok: true,
   readCalls,
   panelClasses: [...classes].sort(),
-  drawerClasses: [...drawerClasses].sort(),
+  pageClasses: [...drawerClasses].sort(),
   headings: headingTexts,
-  openCall,
 }, null, 2))
