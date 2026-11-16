@@ -51,7 +51,7 @@ window.__ModuleLoader__.load({
     const zh = {
       'tree.title': '大纲',
       'tree.count': '{count} 个文件',
-      'tree.empty': '点击会话中的 Markdown 文件后，这里会按“工作区 / 会话 / 文件 / 标题”列出目录。',
+      'tree.empty': '点击会话中的 Markdown 文件或计划后，这里会列出文件与标题。',
       'tree.loading': '读取中…',
       'tree.expand': '展开',
       'tree.collapse': '收起',
@@ -79,7 +79,7 @@ window.__ModuleLoader__.load({
     const en = {
       'tree.title': 'Outline',
       'tree.count': '{count} files',
-      'tree.empty': 'Open a Markdown file from a session and this tree lists it by workspace, session, file, and heading.',
+      'tree.empty': 'Open a Markdown file or a plan from the conversation and it is listed here.',
       'tree.loading': 'Reading…',
       'tree.expand': 'Expand',
       'tree.collapse': 'Collapse',
