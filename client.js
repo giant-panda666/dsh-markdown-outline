@@ -1610,7 +1610,7 @@ window.__ModuleLoader__.load({
       const openFile = (address) => select(address)
       const openHeading = (address, line) => select(address, line)
       const selected = selection === undefined ? undefined : selection.address
-      return h('div', { className: 'mo-page' },
+      return h('div', { className: 'mo-page', 'data-conversation-composer-overlay': '' },
         h('style', null, CSS),
         h('div', { className: 'mo-page-rail' },
           h(OutlineRail, {
@@ -1725,12 +1725,14 @@ window.__ModuleLoader__.load({
 .mo-tree-count{margin-left:auto;padding-left:8px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .mo-tree-scroll{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;padding:6px 4px 16px;scrollbar-width:thin;scrollbar-color:var(--dsw-alias-scrollbar-bg-l2) transparent}
 .mo-tree-empty{margin:12px 10px;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}
-.mo-page{display:flex;flex-direction:row;width:100%;height:100%;min-height:0;overflow:hidden;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:var(--dsw-font-markdown-base)}
+.mo-page{display:flex;flex-direction:row;width:100%;height:100%;max-height:100%;min-height:0;overflow:hidden;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:var(--dsw-font-markdown-base)}
 .mo-page-rail{display:flex;flex:0 0 auto;flex-direction:column;width:300px;min-width:0;min-height:0;border-right:.5px solid var(--dsw-alias-border-l1)}
 .mo-page-rail .mo-tree{width:100%;flex:1 1 auto;min-height:0;border-right:0}
 .mo-page-rail .mo-tree-head{height:44px;padding:0 16px;font-size:12px}
-.mo-page-rail .mo-tree-scroll{padding:8px 8px 24px}
+.mo-page-rail .mo-tree-scroll{padding:8px 8px calc(var(--dsh-composer-height, 152px) + 8px)}
 .mo-page-doc{display:flex;flex:1 1 auto;flex-direction:column;min-width:0;min-height:0}
+.mo-page-doc .mo-doc{padding-bottom:calc(var(--dsh-composer-height, 152px) + 16px)}
+.mo-page-doc .mo-scroll{overscroll-behavior:contain}
 .mo-page-empty{display:flex;flex:1 1 auto;align-items:center;justify-content:center;color:var(--dsw-alias-label-tertiary);font-size:12px}
 .mo-page .mo-row-workspace{font-size:12.5px}
 .mo-page .mo-row-session,.mo-page .mo-row-file,.mo-page .mo-row-heading{font-size:12.5px;line-height:19px}
