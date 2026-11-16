@@ -58,6 +58,7 @@ window.__ModuleLoader__.load({
       'tree.collapse': '收起',
       'action.refresh': '重新读取文件',
       'outline.title': 'Markdown 预览',
+      'outline.planName': '计划',
       'action.backToSession': '回到会话',
       'action.builtin': '用内置预览打开',
       'state.loading': '正在读取文件…',
@@ -87,6 +88,7 @@ window.__ModuleLoader__.load({
       'tree.collapse': 'Collapse',
       'action.refresh': 'Read the file again',
       'outline.title': 'Markdown preview',
+      'outline.planName': 'Plan',
       'action.backToSession': 'Back to session',
       'action.builtin': 'Open in the built-in preview',
       'state.loading': 'Reading document…',
@@ -129,6 +131,29 @@ window.__ModuleLoader__.load({
       } catch (_malformed) {
         return undefined
       }
+    }
+
+    const PLAN_PREFIX = 'dsh-resource://plan/'
+
+    /**
+     * Parse a plan resource address: `dsh-resource://plan/<sessionId>/<callId>`,
+     * or the subagent form whose parent Session is what a reader groups by.
+     * @param address - a candidate address.
+     * @returns the owning Session and call id, or undefined for another scheme.
+     */
+    function parsePlanAddress(address) {
+      if (typeof address !== 'string' || !address.startsWith(PLAN_PREFIX)) return undefined
+      const end = address.search(/[?#]/)
+      const parts = address.slice(PLAN_PREFIX.length, end === -1 ? undefined : end).split('/')
+      try {
+        if (parts.length === 2 && parts[0] !== '' && parts[1] !== '') {
+          return { sessionId: decodeURIComponent(parts[0]), callId: decodeURIComponent(parts[1]) }
+        }
+        if (parts.length === 5 && parts[0] === 'subagent' && parts[1] !== '' && parts[4] !== '') {
+          return { sessionId: decodeURIComponent(parts[1]), callId: decodeURIComponent(parts[4]) }
+        }
+      } catch (_malformed) { /* A malformed escape names no plan. */ }
+      return undefined
     }
 
     /**
@@ -1121,7 +1146,7 @@ window.__ModuleLoader__.load({
 
     /** Persisted panel preferences: outline visibility and collapsed tree nodes. */
     function createUiState() {
-      const initial = { collapsed: {}, pageAddress: undefined, pageLine: undefined }
+      const initial = { collapsed: {}, pageAddress: undefined, pageLine: undefined, selections: {}, plans: {} }
       try {
         const raw = localStorage.getItem(UI_KEY)
         if (raw !== null && raw !== undefined) {
@@ -1161,6 +1186,47 @@ window.__ModuleLoader__.load({
           else collapsed[key] = true
           state = { ...state, collapsed }
           persist()
+          publish()
+        },
+        selectionOf(sessionId) {
+          return snapshot.selections[sessionId]
+        },
+        selectDocument(sessionId, address, line) {
+          state = {
+            ...state,
+            selections: { ...state.selections, [sessionId]: { address, line } },
+          }
+          publish()
+        },
+        plansOf(sessionId) {
+          return snapshot.plans[sessionId] === undefined ? [] : snapshot.plans[sessionId]
+        },
+        addPlan(sessionId, address) {
+          const plans = snapshot.plans[sessionId] === undefined ? [] : snapshot.plans[sessionId]
+          if (plans.some((plan) => plan.address === address)) return
+          state = {
+            ...state,
+            plans: { ...state.plans, [sessionId]: [...plans, { address }] },
+          }
+          publish()
+        },
+        setPlanMeta(address, meta) {
+          let changed = false
+          const plans = {}
+          for (const [sessionId, list] of Object.entries(state.plans)) {
+            const next = list.map((plan) => {
+              if (plan.address !== address) return plan
+              const merged = { address, title: plan.title, headings: plan.headings }
+              if (meta.title !== undefined) merged.title = meta.title
+              if (meta.headings !== undefined) merged.headings = meta.headings
+              if (merged.title === plan.title && merged.headings === plan.headings) return plan
+              changed = true
+              return merged
+            })
+            plans[sessionId] = next
+          }
+          if (!changed) return
+          state = { ...state, plans }
           publish()
         },
         pageState() {
@@ -1211,6 +1277,11 @@ window.__ModuleLoader__.load({
       session() {
         return h('svg', { viewBox: '0 0 16 16', width: 13, height: 13, 'aria-hidden': true, className: 'mo-row-icon' },
           h('path', { d: 'M3 3.6h10v6.2H7.2L4.4 12.4v-2.6H3z', fill: 'none', stroke: 'currentColor', strokeWidth: 1.3, strokeLinejoin: 'round' }))
+      },
+      plan() {
+        return h('svg', { viewBox: '0 0 16 16', width: 14, height: 14, 'aria-hidden': true },
+          h('rect', { x: 3, y: 2.5, width: 10, height: 11, rx: 1.5, fill: 'none', stroke: 'currentColor', strokeWidth: 1.2 }),
+          h('path', { d: 'M5.5 6h5M5.5 8.5h5M5.5 11h3', fill: 'none', stroke: 'currentColor', strokeWidth: 1.2, strokeLinecap: 'round' }))
       },
       markdown() {
         return h('svg', { viewBox: '0 0 16 16', width: 13, height: 13, 'aria-hidden': true, className: 'mo-row-icon mo-row-icon-md' },
@@ -1295,127 +1366,136 @@ window.__ModuleLoader__.load({
     function OutlineRail(props) {
       const {
         groups, activeAddress, activeLine, collapsedOf, onToggleNode, onOpenFile, onOpenHeading,
-        headingsOf, loadingOf, width, fileCount, labels, onClose, onOpenSession,
+        headingsOf, loadingOf, width, fileCount, labels, onClose, onOpenSession, flat,
       } = props
       const rows = []
       const toggleLabel = (collapsed) => (collapsed ? labels.expand : labels.collapse)
-      for (const group of groups) {
-        const workspaceKey = group.key
-        const workspaceCollapsed = collapsedOf(workspaceKey)
-        rows.push(h('button', {
-          key: workspaceKey,
-          type: 'button',
-          className: 'mo-row mo-row-workspace',
-          onClick: () => onToggleNode(workspaceKey),
-          title: group.path === undefined ? group.title : group.path,
-          'aria-expanded': !workspaceCollapsed,
-          'aria-label': `${toggleLabel(workspaceCollapsed)} ${group.title}`,
+      const fileRow = (entry, pad) => {
+        const out = []
+        const fileKey = `f:${entry.address}`
+        const fileCollapsed = collapsedOf(fileKey)
+        const active = entry.address === activeAddress
+        const headings = headingsOf(entry.address)
+        const loading = loadingOf(entry.address)
+        const hasChildren = headings === undefined ? loading : headings.length > 0
+        out.push(h('div', {
+          key: fileKey,
+          className: 'mo-row mo-row-file',
+          style: { paddingLeft: pad },
+          'data-active': active ? 'true' : undefined,
         },
-          h('span', { className: 'mo-chevronbox' }, SVG.chevron(workspaceCollapsed ? undefined : 'open')),
-          SVG.workspace(),
-          h('span', { className: 'mo-row-label' }, group.title),
-          h('span', { className: 'mo-row-count' }, String(group.fileCount))))
-        if (workspaceCollapsed) continue
-        for (const session of group.sessions) {
-          const sessionKey = `s:${group.key}:${session.sessionId}`
-          const sessionCollapsed = collapsedOf(sessionKey)
-          rows.push(h('div', {
-            key: sessionKey,
-            className: 'mo-row mo-row-session',
-            style: { paddingLeft: 14 },
-          },
-            h('button', {
+          hasChildren
+            ? h('button', {
               type: 'button',
               className: 'mo-rowtoggle',
-              onClick: () => onToggleNode(sessionKey),
-              title: toggleLabel(sessionCollapsed),
-              'aria-label': `${toggleLabel(sessionCollapsed)} ${session.title}`,
-              'aria-expanded': !sessionCollapsed,
-            }, h('span', { className: 'mo-chevronbox' }, SVG.chevron(sessionCollapsed ? undefined : 'open'))),
-            h('button', {
-              type: 'button',
-              className: 'mo-rowbody',
-              onClick: () => onToggleNode(sessionKey),
-              title: session.title,
-            },
-              SVG.session(),
-              h('span', { className: 'mo-row-label' }, session.title)),
-            onOpenSession === undefined ? null : h('button', {
-              type: 'button',
-              className: 'mo-rowaction',
               onClick: (event) => {
                 event.stopPropagation()
-                onOpenSession(session.sessionId)
+                onToggleNode(fileKey)
               },
-              title: labels.backToSession,
-              'aria-label': labels.backToSession,
-            }, SVG.back())))
-          if (sessionCollapsed) continue
-          for (const entry of session.files) {
-            const fileKey = `f:${entry.address}`
-            const fileCollapsed = collapsedOf(fileKey)
-            const active = entry.address === activeAddress
-            const headings = headingsOf(entry.address)
-            const loading = loadingOf(entry.address)
-            const hasChildren = headings === undefined ? loading : headings.length > 0
-            rows.push(h('div', {
-              key: fileKey,
-              className: 'mo-row mo-row-file',
-              style: { paddingLeft: 26 },
-              'data-active': active ? 'true' : undefined,
+              title: toggleLabel(fileCollapsed),
+              'aria-label': `${toggleLabel(fileCollapsed)} ${entry.name}`,
+              'aria-expanded': !fileCollapsed,
+            }, h('span', { className: 'mo-chevronbox' }, SVG.chevron(fileCollapsed ? undefined : 'open')))
+            : h('span', { className: 'mo-chevronbox' }),
+          h('button', {
+            type: 'button',
+            className: 'mo-rowbody',
+            onClick: () => onOpenFile(entry.address),
+            title: entry.path,
+            'aria-current': active ? 'true' : undefined,
+          },
+            entry.plan === true ? SVG.plan() : SVG.markdown(),
+            h('span', { className: 'mo-row-label' }, entry.name),
+            entry.hint === undefined || entry.hint === ''
+              ? null
+              : h('span', { className: 'mo-row-dir', title: entry.path === '' ? entry.hint : dirnameOf(entry.path) }, entry.hint),
+            loading ? h('span', { className: 'mo-row-badge' }, '…') : null)))
+        if (fileCollapsed) return out
+        if (headings === undefined) {
+          if (loading) {
+            out.push(h('div', { key: `${fileKey}-pending`, className: 'mo-row mo-row-hint', style: { paddingLeft: pad + 16 } },
+              labels.loading))
+          }
+          return out
+        }
+        for (let index = 0; index < headings.length; index += 1) {
+          const heading = headings[index]
+          const isActive = active && heading.line === activeLine
+          out.push(h('button', {
+            key: `${fileKey}-h${heading.line}-${index}`,
+            type: 'button',
+            className: 'mo-row mo-row-heading',
+            style: { paddingLeft: Math.max(0, pad + 12) + Math.min(heading.level - 1, 4) * 12 },
+            onClick: () => {
+              onOpenHeading(entry.address, heading.line)
             },
-              hasChildren
-                ? h('button', {
-                  type: 'button',
-                  className: 'mo-rowtoggle',
-                  onClick: (event) => {
-                    event.stopPropagation()
-                    onToggleNode(fileKey)
-                  },
-                  title: toggleLabel(fileCollapsed),
-                  'aria-label': `${toggleLabel(fileCollapsed)} ${entry.name}`,
-                  'aria-expanded': !fileCollapsed,
-                }, h('span', { className: 'mo-chevronbox' }, SVG.chevron(fileCollapsed ? undefined : 'open')))
-                : h('span', { className: 'mo-chevronbox' }),
+            title: `H${heading.level} ${heading.text}`,
+            'data-active': isActive ? 'true' : undefined,
+            'data-level': String(heading.level),
+          },
+            h('span', { className: 'mo-row-headingmark', 'data-level': String(heading.level) }, `H${heading.level}`),
+            h('span', { className: 'mo-row-label' }, heading.text)))
+        }
+        return out
+      }
+      if (flat === true) {
+        for (const group of groups) {
+          for (const entry of group.files) rows.push(...fileRow(entry, 14))
+        }
+      } else {
+        for (const group of groups) {
+          const workspaceKey = group.key
+          const workspaceCollapsed = collapsedOf(workspaceKey)
+          rows.push(h('button', {
+            key: workspaceKey,
+            type: 'button',
+            className: 'mo-row mo-row-workspace',
+            onClick: () => onToggleNode(workspaceKey),
+            title: group.path === undefined ? group.title : group.path,
+            'aria-expanded': !workspaceCollapsed,
+            'aria-label': `${toggleLabel(workspaceCollapsed)} ${group.title}`,
+          },
+            h('span', { className: 'mo-chevronbox' }, SVG.chevron(workspaceCollapsed ? undefined : 'open')),
+            SVG.workspace(),
+            h('span', { className: 'mo-row-label' }, group.title),
+            h('span', { className: 'mo-row-count' }, String(group.fileCount))))
+          if (workspaceCollapsed) continue
+          for (const session of group.sessions) {
+            const sessionKey = `s:${group.key}:${session.sessionId}`
+            const sessionCollapsed = collapsedOf(sessionKey)
+            rows.push(h('div', {
+              key: sessionKey,
+              className: 'mo-row mo-row-session',
+              style: { paddingLeft: 14 },
+            },
+              h('button', {
+                type: 'button',
+                className: 'mo-rowtoggle',
+                onClick: () => onToggleNode(sessionKey),
+                title: toggleLabel(sessionCollapsed),
+                'aria-label': `${toggleLabel(sessionCollapsed)} ${session.title}`,
+                'aria-expanded': !sessionCollapsed,
+              }, h('span', { className: 'mo-chevronbox' }, SVG.chevron(sessionCollapsed ? undefined : 'open'))),
               h('button', {
                 type: 'button',
                 className: 'mo-rowbody',
-                onClick: () => onOpenFile(entry.address),
-                title: entry.path,
-                'aria-current': active ? 'true' : undefined,
+                onClick: () => onToggleNode(sessionKey),
+                title: session.title,
               },
-                SVG.markdown(),
-                h('span', { className: 'mo-row-label' }, entry.name),
-                entry.hint === undefined || entry.hint === ''
-                  ? null
-                  : h('span', { className: 'mo-row-dir', title: dirnameOf(entry.path) }, entry.hint),
-                loading ? h('span', { className: 'mo-row-badge' }, '…') : null)))
-            if (fileCollapsed) continue
-            if (headings === undefined) {
-              if (loading) {
-                rows.push(h('div', { key: `${fileKey}-pending`, className: 'mo-row mo-row-hint', style: { paddingLeft: 42 } },
-                  labels.loading))
-              }
-              continue
-            }
-            for (let index = 0; index < headings.length; index += 1) {
-              const heading = headings[index]
-              const isActive = active && heading.line === activeLine
-              rows.push(h('button', {
-                key: `${fileKey}-h${heading.line}-${index}`,
+                SVG.session(),
+                h('span', { className: 'mo-row-label' }, session.title)),
+              onOpenSession === undefined ? null : h('button', {
                 type: 'button',
-                className: 'mo-row mo-row-heading',
-                style: { paddingLeft: 38 + Math.min(heading.level - 1, 4) * 12 },
-                onClick: () => {
-                  onOpenHeading(entry.address, heading.line)
+                className: 'mo-rowaction',
+                onClick: (event) => {
+                  event.stopPropagation()
+                  onOpenSession(session.sessionId)
                 },
-                title: `H${heading.level} ${heading.text}`,
-                'data-active': isActive ? 'true' : undefined,
-                'data-level': String(heading.level),
-              },
-                h('span', { className: 'mo-row-headingmark', 'data-level': String(heading.level) }, `H${heading.level}`),
-                h('span', { className: 'mo-row-label' }, heading.text)))
-            }
+                title: labels.backToSession,
+                'aria-label': labels.backToSession,
+              }, SVG.back())))
+            if (sessionCollapsed) continue
+            for (const entry of session.files) rows.push(...fileRow(entry, 26))
           }
         }
       }
@@ -1435,107 +1515,20 @@ window.__ModuleLoader__.load({
           : rows)))
     }
 
-    /** The table of contents and document for one open Markdown tab. */
     /**
-     * Group catalog entries for the outline: workspace, then the Session that
-     * authorizes each file, then the files opened from it.
-     * @param entries - catalog entries.
-     * @param workspaces - Workspace views, in sidebar order.
-     * @param sessionsById - Session list rows, for display titles.
-     * @param t - translate function.
-     * @returns ordered groups.
+     * The Markdown outline page: the left Sidebar entry opens it, the tree sits
+     * on the left under the "Markdown 大纲" title, and the selected file's
+     * content fills the right pane. Directory rows collapse like a file tree.
      */
-    function groupOutline(entries, workspaces, sessionsById, t) {
-      const bySession = new Map()
-      const ordered = []
-      for (const workspace of workspaces === undefined || workspaces === null ? [] : workspaces) {
-        ordered.push(workspace)
-        for (const id of workspace.sessionIds === undefined ? [] : workspace.sessionIds) {
-          if (!bySession.has(id)) bySession.set(id, workspace)
-        }
-      }
-      const buckets = new Map()
-      const bucketFor = (key, title, path) => {
-        let bucket = buckets.get(key)
-        if (bucket === undefined) {
-          bucket = { key, title, path, fileCount: 0, sessions: new Map() }
-          buckets.set(key, bucket)
-        }
-        return bucket
-      }
-      for (const entry of entries) {
-        const workspace = bySession.get(entry.sessionId)
-        const bucket = workspace === undefined
-          ? bucketFor('other', t('tree.noWorkspace'), undefined)
-          : bucketFor(`w:${workspace.workspaceId}`, workspace.title || basenameOf(workspace.path || ''), workspace.path)
-        bucket.fileCount += 1
-        let session = bucket.sessions.get(entry.sessionId)
-        if (session === undefined) {
-          const row = sessionsById === undefined ? undefined : sessionsById[entry.sessionId]
-          session = {
-            sessionId: entry.sessionId,
-            title: row === undefined || row.displayTitle === undefined ? shortId(entry.sessionId) : row.displayTitle,
-            files: [],
-          }
-          bucket.sessions.set(entry.sessionId, session)
-        }
-        session.files.push(entry)
-      }
-      const result = []
-      for (const workspace of ordered) {
-        const bucket = buckets.get(`w:${workspace.workspaceId}`)
-        if (bucket !== undefined) result.push(bucket)
-      }
-      const other = buckets.get('other')
-      if (other !== undefined) result.push(other)
-      result.forEach((bucket) => {
-        bucket.sessions = [...bucket.sessions.values()]
-        for (const session of bucket.sessions) {
-          // Two files with one basename need their directory to tell them apart.
-          const counts = new Map()
-          for (const file of session.files) counts.set(file.name, (counts.get(file.name) || 0) + 1)
-          for (const file of session.files) {
-            file.hint = counts.get(file.name) > 1
-              ? dirnameOf(file.path).replace(/\/+$/, '').split('/').filter(Boolean).slice(-2).join('/')
-              : undefined
-          }
-        }
-      })
-      return result
-    }
-
     /**
-     * A Markdown link opened from a conversation asks for a reading pane; the
-     * outline page is that pane now, so this tab hands the file to the page and
-     * closes itself instead of duplicating the document beside the chat.
-     */
-    function MarkdownLinkRedirect({ useTabInfo }) {
-      const info = useTabInfo()
-      const tab = info.tab
-      const address = tab.contentId
-      const params = tab.navigation === undefined ? undefined : tab.navigation.params
-      const line = params !== undefined && params !== null && typeof params.line === 'number' ? params.line : undefined
-      useEffect(() => {
-        ui.selectPage(address, line)
-        try {
-          pluginCtx.layout.selectPanel(ID)
-        } catch (_unavailable) { /* The shell owns the main panel. */ }
-        try {
-          tab.actions.close()
-        } catch (_unavailable) { /* The record may already be gone. */ }
-      }, [address])
-      return null
-    }
-
-    /**
-     * One document inside the outline page. The page owns the tree; this pane
-     * reads the selected file through the shared catalog and the standard
-     * resource hook, so it reloads when the file changes on disk.
+     * One document inside the preview page or the Session view: the file's
+     * Markdown read through the shared catalog and the standard resource hook,
+     * so it reloads when the file changes on disk.
+     * @param props - resource address, resource hook, copy, and selection target.
      */
     function PageDocument(props) {
-      const { address, useResource, t } = props
+      const { address, useResource, t, line, select } = props
       const meta = useResource(address)
-      const uiSnapshot = useSyncExternalStore(ui.subscribe, ui.getSnapshot)
       const file = parseSessionAddress(address)
       const scrollRef = useRef(null)
       const doc = catalog.docOf(address)
@@ -1556,12 +1549,11 @@ window.__ModuleLoader__.load({
 
       // Reveal the line the tree asked for once the content is in place.
       useEffect(() => {
-        const line = uiSnapshot.pageLine
         const element = scrollRef.current
         if (line === undefined || element === null) return
         const target = element.querySelector(`[data-md-line="${line}"]`)
         if (target !== null) element.scrollTop = Math.max(0, target.offsetTop - 12)
-      }, [address, uiSnapshot.pageLine, doc === undefined ? undefined : doc.version])
+      }, [address, line, doc === undefined ? undefined : doc.version])
 
       const resolveImage = useCallback((destination) => {
         if (typeof destination !== 'string' || destination.length === 0) return undefined
@@ -1590,11 +1582,11 @@ window.__ModuleLoader__.load({
         }
       }, [meta, doc, file])
 
-      const scrollToLine = useCallback((line) => {
+      const scrollToLine = useCallback((target) => {
         const element = scrollRef.current
         if (element === null) return
-        const target = element.querySelector(`[data-md-line="${line}"]`)
-        if (target !== null) element.scrollTop = Math.max(0, target.offsetTop - 12)
+        const found = element.querySelector(`[data-md-line="${target}"]`)
+        if (found !== null) element.scrollTop = Math.max(0, found.offsetTop - 12)
       }, [])
 
       const openLink = useCallback((href) => {
@@ -1616,8 +1608,8 @@ window.__ModuleLoader__.load({
         if (file === undefined) return
         const resolved = resolveRelativePath(dirnameOf(file.path), href)
         if (resolved === undefined) return
-        ui.selectPage(sessionFileAddress(file.sessionId, resolved))
-      }, [file, headings, scrollToLine])
+        select(sessionFileAddress(file.sessionId, resolved))
+      }, [file, headings, scrollToLine, select])
 
       const metaFailure = meta !== undefined && meta !== null && meta.status === 'failed' ? meta.failure : undefined
       const failure = doc === undefined ? undefined : doc.error
@@ -1660,10 +1652,226 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * The Markdown outline page: the left Sidebar entry opens it, the tree sits
-     * on the left under the "Markdown 大纲" title, and the selected file's
-     * content fills the right pane. Directory rows collapse like a file tree.
+     * One plan document: the Markdown a submitted plan holds, read through the
+     * plan resource provider, with its title and headings fed back to the tree.
+     * @param props - plan address, resource hook, and copy.
      */
+    function PlanDocument(props) {
+      const { address, useResource, t } = props
+      const meta = useResource(address)
+      const scrollRef = useRef(null)
+      const value = meta !== undefined && meta !== null && meta.value !== undefined ? meta.value : undefined
+      const markdown = value !== undefined && typeof value.markdown === 'string' ? value.markdown : undefined
+      const title = value !== undefined && typeof value.title === 'string' ? value.title : undefined
+      const headings = useMemo(() => markdown === undefined ? undefined : parseHeadings(markdown), [markdown])
+
+      useEffect(() => {
+        if (title === undefined && headings === undefined) return
+        ui.setPlanMeta(address, { title, headings })
+      }, [address, title, headings])
+
+      const openLink = useCallback((href) => {
+        if (typeof href !== 'string' || !/^(?:https?|mailto):/i.test(href)) return
+        try {
+          window.open(href, '_blank', 'noopener')
+        } catch (_blocked) { /* A blocked popup leaves the link inert. */ }
+      }, [])
+
+      const failure = meta !== undefined && meta !== null && meta.status === 'failed' ? meta.failure : undefined
+      let body
+      if (markdown !== undefined && markdown.length > 0) {
+        body = h('div', { className: 'mo-scroll', ref: scrollRef, tabIndex: -1 },
+          h('article', { className: 'mo-doc' },
+            h(MarkdownDocument, {
+              text: markdown,
+              openLink,
+              labels: { title: t('md.copy'), copied: t('md.copied'), language: t('md.language') },
+              frontmatterLabel: t('md.frontmatter'),
+            })))
+      } else if (failure !== undefined) {
+        body = h('div', { className: 'mo-state mo-state-error' },
+          h('p', { className: 'mo-error' }, errorCopy(t, failure.code, failure.message)))
+      } else if (value !== undefined) {
+        body = h('div', { className: 'mo-state' }, h('span', null, t('state.empty')))
+      } else {
+        body = h('div', { className: 'mo-state' }, h('span', { className: 'mo-spinner', 'aria-hidden': true }), h('span', null, t('state.loading')))
+      }
+
+      return h('section', { className: 'mo-page-doc' },
+        h('div', { className: 'mo-head' },
+          h('div', { className: 'mo-heading' },
+            h('span', { className: 'mo-title', title: address }, title === undefined ? t('outline.planName') : title),
+            h('span', { className: 'mo-sub' }, t('outline.planName')))),
+        body)
+    }
+
+    /**
+     * The Session's Markdown documents view, shown beside the Conversation:
+     * the plans and markdown files opened in this Session, flat (no workspace
+     * level), with the selected document on the right.
+     * @param props - Session standard props and locale.
+     */
+    function SessionDocumentsView(props) {
+      const { sessionId, useResource, t: localeT } = props
+      const t = typeof localeT === 'function' ? localeT : boundT
+      const catalogSnapshot = useSyncExternalStore(catalog.subscribe, catalog.getSnapshot)
+      const uiSnapshot = useSyncExternalStore(ui.subscribe, ui.getSnapshot)
+      const selection = sessionId === undefined ? undefined : uiSnapshot.selections[sessionId]
+      const plans = sessionId === undefined ? [] : (uiSnapshot.plans[sessionId] === undefined ? [] : uiSnapshot.plans[sessionId])
+      const files = useMemo(() => {
+        if (sessionId === undefined) return []
+        return catalog.entriesFor(sessionId).map((entry) => ({
+          address: entry.address,
+          name: entry.name,
+          path: entry.path,
+          hint: entry.hint,
+          order: entry.order,
+        }))
+      }, [catalogSnapshot.revision, sessionId])
+      const rows = useMemo(() => {
+        const out = plans.map((plan) => ({
+          address: plan.address,
+          name: plan.title === undefined ? t('outline.planName') : plan.title,
+          path: '',
+          hint: plan.title === undefined ? '' : t('outline.planName'),
+          plan: true,
+          order: 0,
+        }))
+        for (const file of files) out.push(file)
+        return out
+      }, [plans, files, t])
+      const headingsOf = (address) => {
+        const plan = plans.find((item) => item.address === address)
+        if (plan !== undefined) return plan.headings
+        return catalog.headingsOf(address)
+      }
+      const loadingOf = (address) => {
+        if (plans.some((item) => item.address === address)) return false
+        const cached = catalog.docOf(address)
+        return cached === undefined || cached.status === 'loading'
+      }
+      const select = (address, line) => ui.selectDocument(sessionId, address, line)
+      const openFile = (address) => select(address)
+      const openHeading = (address, line) => select(address, line)
+      const selected = selection === undefined ? undefined : selection.address
+      return h('div', { className: 'mo-page' },
+        h('style', null, CSS),
+        h('div', { className: 'mo-page-rail' },
+          h(OutlineRail, {
+            flat: true,
+            groups: [{ key: 'session', files: rows }],
+            activeAddress: selected,
+            activeLine: selection === undefined ? undefined : selection.line,
+            collapsedOf: ui.collapsed,
+            onToggleNode: ui.toggleNode,
+            onOpenFile: openFile,
+            onOpenHeading: openHeading,
+            headingsOf,
+            loadingOf,
+            width: '100%',
+            fileCount: rows.length,
+            labels: {
+              title: t('outline.title'),
+              count: t('tree.count'),
+              empty: t('tree.empty'),
+              loading: t('tree.loading'),
+              expand: t('tree.expand'),
+              collapse: t('tree.collapse'),
+            },
+          })),
+        selected === undefined
+          ? h('div', { className: 'mo-page-empty' }, h('span', null, t('tree.empty')))
+          : (parsePlanAddress(selected) === undefined
+            ? h(PageDocument, { key: selected, address: selected, useResource, t, line: selection.line, select })
+            : h(PlanDocument, { key: selected, address: selected, useResource, t })))
+    }
+
+    /**
+     * A Markdown link opened from a conversation asks for a reading pane; this
+     * Session's preview view is that pane now, so the tab hands the document to
+     * the view and closes itself.
+     * @param props - tab information hook and the Session standard prop.
+     */
+    function MarkdownLinkRedirect(props) {
+      const { useTabInfo, sessionId } = props
+      const info = useTabInfo()
+      const tab = info.tab
+      const address = tab.contentId
+      const params = tab.navigation === undefined ? undefined : tab.navigation.params
+      const line = params !== undefined && params !== null && typeof params.line === 'number' ? params.line : undefined
+      useEffect(() => {
+        if (parsePlanAddress(address) !== undefined) ui.addPlan(sessionId, address)
+        else ui.selectPage(address, line)
+        ui.selectDocument(sessionId, address, line)
+        try {
+          pluginCtx.uiConversation.binding(sessionId).activate(ID)
+        } catch (_unavailable) { /* The Session owns the view state. */ }
+        try {
+          tab.actions.close()
+        } catch (_unavailable) { /* The record may already be gone. */ }
+      }, [address])
+      return null
+    }
+
+    /**
+     * Group catalog entries into workspace → session → file for the page tree.
+     * The workspace is the one whose session ids name the entry's authorizing
+     * Session; an entry whose workspace is unknown falls under one group.
+     * @param entries - flattened catalog entries.
+     * @param workspaces - workspace items, when the hook has them.
+     * @param sessionsById - Session records, when the hook has them.
+     * @param t - translate function.
+     * @returns groups in display order.
+     */
+    function groupOutline(entries, workspaces, sessionsById, t) {
+      const groups = new Map()
+      const workspaceOf = (sessionId) => {
+        for (const workspace of workspaces === undefined ? [] : workspaces) {
+          if (Array.isArray(workspace.sessionIds) && workspace.sessionIds.includes(sessionId)) return workspace
+        }
+        return undefined
+      }
+      let order = 0
+      for (const entry of entries) {
+        const sessionId = entry.sidebarSessionId === undefined ? entry.sessionId : entry.sidebarSessionId
+        const workspace = workspaceOf(sessionId)
+        const groupKey = workspace === undefined ? 'no-workspace' : workspace.workspaceId
+        if (!groups.has(groupKey)) {
+          groups.set(groupKey, {
+            key: groupKey,
+            title: workspace === undefined ? t('tree.noWorkspace') : workspace.title,
+            path: workspace === undefined ? undefined : workspace.path,
+            fileCount: 0,
+            sessions: new Map(),
+          })
+        }
+        const group = groups.get(groupKey)
+        if (!group.sessions.has(sessionId)) {
+          const session = sessionsById === undefined ? undefined : sessionsById[sessionId]
+          group.sessions.set(sessionId, {
+            sessionId,
+            title: session === undefined ? shortId(sessionId) : session.displayTitle,
+            files: [],
+          })
+        }
+        group.sessions.get(sessionId).files.push({
+          address: entry.address,
+          name: entry.name,
+          path: entry.path,
+          hint: entry.path.includes('/') ? dirnameOf(entry.path).replace(/\/+$/, '') : '',
+          order: order += 1,
+        })
+        group.fileCount += 1
+      }
+      return [...groups.values()].map((group) => ({
+        key: group.key,
+        title: group.title,
+        path: group.path,
+        fileCount: group.fileCount,
+        sessions: [...group.sessions.values()].sort((left, right) => left.title.localeCompare(right.title)),
+      })).sort((left, right) => left.title.localeCompare(right.title))
+    }
+
     function OutlinePage(props) {
       const { useWorkspaces, useSessions, useResource, t: localeT } = props
       const fallbackSelector = useCallback(() => undefined, [])
@@ -1730,7 +1938,14 @@ window.__ModuleLoader__.load({
           })),
         selected === undefined
           ? h('div', { className: 'mo-page-empty' }, h('span', null, t('tree.empty')))
-          : h(PageDocument, { key: selected, address: selected, useResource, t }))
+          : h(PageDocument, {
+            key: selected,
+            address: selected,
+            useResource,
+            t,
+            line: uiSnapshot.pageLine,
+            select: (target, targetLine) => ui.selectPage(target, targetLine),
+          }))
     }
 
     /**
@@ -1885,7 +2100,7 @@ window.__ModuleLoader__.load({
     // -------------------------------------------------------------- plugin
 
     /** Client services this plugin requires before it activates. */
-    const inject = ['slots', 'locale', 'sidebarRightTabs', 'sidebarRight', 'remote', 'remote.workspaceFiles', 'uiWorkspace', 'layout']
+    const inject = ['slots', 'locale', 'sidebarRightTabs', 'sidebarRight', 'remote', 'remote.workspaceFiles', 'uiWorkspace', 'layout', 'uiConversation']
 
     let catalog
     let ui
@@ -1908,13 +2123,15 @@ window.__ModuleLoader__.load({
       ctx.effect(() => ctx.sidebarRightTabs.register({
         id: ID,
         kind: KIND,
-        patterns: ['*.md', '*.markdown', '*.mdown', '*.mdx'],
+        patterns: ['*.md', '*.markdown', '*.mdown', '*.mdx', 'dsh-resource://plan/**'],
         priority: 'extension',
         canOpen: (address) => {
+          if (parsePlanAddress(address) !== undefined) return true
           const file = parseSessionAddress(address)
           return file !== undefined && isMarkdownPath(file.path)
         },
         title: (address) => {
+          if (parsePlanAddress(address) !== undefined) return boundT('outline.planName')
           const file = parseSessionAddress(address)
           return file === undefined ? boundT('tree.title') : basenameOf(file.path)
         },
@@ -1928,6 +2145,13 @@ window.__ModuleLoader__.load({
         { name: 'sidebar.right.pane.tab.title', key: ID },
         MarkdownTitle,
       )), 'markdown-outline: tab title')
+      ctx.effect(() => ctx.slots.inject('conversation.view', () => ctx.slots.register({
+        name: 'conversation.view',
+        id: ID,
+        order: 40,
+        locale: NS,
+        label: () => boundT('outline.title'),
+      }, SessionDocumentsView)), 'markdown-outline: session view')
       ctx.effect(() => ctx.slots.inject('main', () => ctx.slots.register({
         name: 'main',
         key: ID,

@@ -106,6 +106,8 @@ let componentRegistration
 let titleRegistration
 let pageRegistration
 let entryRegistration
+let viewRegistration
+const viewActivations = []
 const opened = []
 let openTabsSnapshot = []
 const openTabsListeners = []
@@ -140,16 +142,22 @@ const ctx = {
   },
   slots: {
     inject(name, callback) {
-      const known = ['sidebar.right.pane.tab', 'sidebar.right.pane.tab.title', 'main', 'sidebar.panellist']
+      const known = ['sidebar.right.pane.tab', 'sidebar.right.pane.tab.title', 'conversation.view', 'main', 'sidebar.panellist']
       if (!known.includes(name)) throw new Error(`unexpected slot ${name}`)
       callback()
     },
     register(options, component) {
       if (options.name === 'sidebar.right.pane.tab.title') titleRegistration = { options, component }
+      else if (options.name === 'conversation.view') viewRegistration = { options, component }
       else if (options.name === 'main') pageRegistration = { options, component }
       else if (options.name === 'sidebar.panellist') entryRegistration = { options, component }
       else componentRegistration = { options, component }
       return () => {}
+    },
+  },
+  uiConversation: {
+    binding(id) {
+      return { activate(view) { viewActivations.push([id, view]) } }
     },
   },
   uiWorkspace: {
@@ -190,11 +198,13 @@ if (componentRegistration === undefined) throw new Error('tab body was not regis
 if (titleRegistration === undefined) throw new Error('tab title was not registered')
 if (pageRegistration === undefined) throw new Error('outline page was not registered')
 if (entryRegistration === undefined) throw new Error('sidebar entry was not registered')
+if (viewRegistration === undefined) throw new Error('session view was not registered')
 if (tabDefinition.priority !== 'extension') throw new Error(`unexpected band ${tabDefinition.priority}`)
 if (!tabDefinition.patterns.includes('*.md')) throw new Error('patterns do not claim *.md')
 if (tabDefinition.canOpen('dsh-resource://file/session/sess-1/a/b.md') !== true) throw new Error('canOpen rejected a .md session address')
 if (tabDefinition.canOpen('dsh-resource://file/session/sess-1/a/b.txt') !== false) throw new Error('canOpen accepted a non-markdown path')
 if (tabDefinition.canOpen('dsh-resource://file/absolute/a/b.md') !== false) throw new Error('canOpen accepted an absolute address')
+if (tabDefinition.canOpen('dsh-resource://plan/sess-1/call-9') !== true) throw new Error('canOpen rejected a plan address')
 if (tabDefinition.title(ADDRESS) !== 'demo.md') throw new Error(`unexpected title ${tabDefinition.title(ADDRESS)}`)
 
 // The catalog syncs from the open-tab inventory during apply and starts reading.
@@ -229,6 +239,7 @@ const props = {
 // The tab body only hands the file to the outline page and closes itself.
 const redirected = componentRegistration.component(props)
 if (redirected !== null) throw new Error('the tab body should render nothing and redirect')
+if (viewActivations.length === 0) throw new Error('the tab body did not activate the session view')
 // The page then shows the file the redirect selected.
 const rendered = pageRegistration.component(props)
 
@@ -346,6 +357,41 @@ if (!pageClasses.has('mo-page-doc') || !pageClasses.has('mo-md')) throw new Erro
 const docTitles = collect(afterSelect, (node) => typeof node.type === 'string' && node.props.className === 'mo-title')
   .map((node) => node.children.join(''))
 if (!docTitles.some((title) => title.includes('second.md'))) throw new Error(`the document pane did not switch files: ${JSON.stringify(docTitles)}`)
+// The Session view shows this session's documents beside the conversation.
+const view = viewRegistration.component({ ...props, sessionId: 'sess-1' })
+const viewClasses = new Set()
+walk(view, (node) => {
+  if (typeof node.type === 'string' && typeof node.props.className === 'string') node.props.className.split(/\s+/).forEach((name) => viewClasses.add(name))
+})
+for (const expected of ['mo-page', 'mo-tree', 'mo-page-doc', 'mo-md']) {
+  if (!viewClasses.has(expected)) throw new Error(`the session view is missing .${expected}`)
+}
+const viewRows = collect(view, (node) => typeof node.type === 'string' && node.props.className === 'mo-row mo-row-file')
+if (viewRows.length !== 2) throw new Error(`the session view did not list its opened files: ${viewRows.length}`)
+
+// A plan opens the view too, and its Markdown becomes the selected document.
+const planAddress = 'dsh-resource://plan/sess-1/call-9'
+const planTab = { ...tab, id: 'tab-plan', title: 'Plan', contentId: planAddress,
+  navigation: { address: planAddress, params: undefined, revision: 0 } }
+componentRegistration.component({
+  ...props,
+  useTabInfo: () => ({ sidebar: { expanded: true, fullscreen: false }, panel: { id: 'pane-1', isFloating: false }, tab: planTab }),
+})
+const planProps = {
+  ...props,
+  useResource: (address) => address.startsWith('dsh-resource://plan/')
+    ? { status: 'live', value: { callId: 'call-9', title: 'Plan title', markdown: '# Plan title\n\n## Step\n' }, version: 'v1' }
+    : { status: 'live', value: { absolutePath: '/ws/docs/demo.md', version: 'v1' } },
+}
+const planView = viewRegistration.component({ ...planProps, sessionId: 'sess-1' })
+const planClasses = new Set()
+walk(planView, (node) => {
+  if (typeof node.type === 'string' && typeof node.props.className === 'string') node.props.className.split(/\s+/).forEach((name) => planClasses.add(name))
+})
+if (!planClasses.has('mo-md')) throw new Error('the plan Markdown did not render in the session view')
+const planTitles = collect(planView, (node) => typeof node.type === 'string' && node.props.className === 'mo-title')
+  .map((node) => node.children.join(''))
+if (!planTitles.some((title) => title.includes('Plan title'))) throw new Error(`the plan title did not reach the document pane: ${JSON.stringify(planTitles)}`)
 const openCall = undefined
 
 // The tab chip renders the markdown glyph before the captured title.
