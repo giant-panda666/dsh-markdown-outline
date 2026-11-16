@@ -65,7 +65,7 @@ const sandbox = {
   },
   console,
   localStorage: { getItem: () => null, setItem: () => {} },
-  document: { baseURI: 'http://127.0.0.1:54514/' },
+  document: { baseURI: 'http://127.0.0.1:54514/', querySelector: () => null },
   navigator: { clipboard: { writeText: async () => {} } },
   URL,
   URLSearchParams,

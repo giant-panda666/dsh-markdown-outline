@@ -1792,6 +1792,26 @@ window.__ModuleLoader__.load({
      * the view and closes itself.
      * @param props - tab information hook and the Session standard prop.
      */
+    /**
+     * Select this plugin's own Conversation View tab in the Session header.
+     * The shell keeps the selected View in its Session store and hands the
+     * selector only to its own header, so the header's button is clicked here.
+     * @returns whether the tab was found and clicked.
+     */
+    function focusSessionViewTab() {
+      if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return false
+      const label = boundT('outline.title')
+      const header = document.querySelector('header')
+      if (header === null) return false
+      for (const element of header.querySelectorAll('button, [role="tab"]')) {
+        const text = element.textContent
+        if (typeof text !== 'string' || !text.includes(label)) continue
+        element.click()
+        return true
+      }
+      return false
+    }
+
     function MarkdownLinkRedirect(props) {
       const { useTabInfo, sessionId } = props
       const info = useTabInfo()
@@ -1806,6 +1826,7 @@ window.__ModuleLoader__.load({
         try {
           pluginCtx.uiConversation.binding(sessionId).activate(ID)
         } catch (_unavailable) { /* The Session owns the view state. */ }
+        focusSessionViewTab()
         try {
           tab.actions.close()
         } catch (_unavailable) { /* The record may already be gone. */ }
