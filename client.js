@@ -52,14 +52,12 @@ window.__ModuleLoader__.load({
       'tree.title': '大纲',
       'tree.count': '{count} 个文件',
       'tree.empty': '点击会话中的 Markdown 文件后，这里会按“工作区 / 会话 / 文件 / 标题”列出目录。',
-      'tree.noWorkspace': '未归入工作区',
       'tree.loading': '读取中…',
       'tree.expand': '展开',
       'tree.collapse': '收起',
       'action.refresh': '重新读取文件',
       'outline.title': 'Markdown 预览',
       'outline.planName': '计划',
-      'action.backToSession': '回到会话',
       'action.builtin': '用内置预览打开',
       'state.loading': '正在读取文件…',
       'state.empty': '这个 Markdown 文件没有内容。',
@@ -82,14 +80,12 @@ window.__ModuleLoader__.load({
       'tree.title': 'Outline',
       'tree.count': '{count} files',
       'tree.empty': 'Open a Markdown file from a session and this tree lists it by workspace, session, file, and heading.',
-      'tree.noWorkspace': 'No workspace',
       'tree.loading': 'Reading…',
       'tree.expand': 'Expand',
       'tree.collapse': 'Collapse',
       'action.refresh': 'Read the file again',
       'outline.title': 'Markdown preview',
       'outline.planName': 'Plan',
-      'action.backToSession': 'Back to session',
       'action.builtin': 'Open in the built-in preview',
       'state.loading': 'Reading document…',
       'state.empty': 'This Markdown file has no content.',
@@ -219,12 +215,6 @@ window.__ModuleLoader__.load({
         out.push(segment)
       }
       return out.join('/')
-    }
-
-    /** @param id - session id. @returns a short readable prefix. */
-    function shortId(id) {
-      const text = String(id)
-      return text.length > 10 ? `${text.slice(0, 8)}…` : text
     }
 
     /** @param template - copy with `{name}` placeholders. @param values - replacements. @returns the formatted string. */
@@ -1146,7 +1136,7 @@ window.__ModuleLoader__.load({
 
     /** Persisted panel preferences: outline visibility and collapsed tree nodes. */
     function createUiState() {
-      const initial = { collapsed: {}, pageAddress: undefined, pageLine: undefined, selections: {}, plans: {} }
+      const initial = { collapsed: {}, selections: {}, plans: {} }
       try {
         const raw = localStorage.getItem(UI_KEY)
         if (raw !== null && raw !== undefined) {
@@ -1229,16 +1219,6 @@ window.__ModuleLoader__.load({
           state = { ...state, plans }
           publish()
         },
-        pageState() {
-          return snapshot.pageAddress
-        },
-        pageLine() {
-          return snapshot.pageLine
-        },
-        selectPage(address, line) {
-          state = { ...state, pageAddress: address, pageLine: line }
-          publish()
-        },
         scrollOf(address) {
           const value = scrollPositions.get(address)
           return value === undefined ? 0 : value
@@ -1269,14 +1249,6 @@ window.__ModuleLoader__.load({
           strokeLinecap: 'round',
           strokeLinejoin: 'round',
         }))
-      },
-      workspace() {
-        return h('svg', { viewBox: '0 0 16 16', width: 13, height: 13, 'aria-hidden': true, className: 'mo-row-icon' },
-          h('path', { d: 'M2 4.5A1.5 1.5 0 0 1 3.5 3h2.6l1.4 1.6h4.9A1.5 1.5 0 0 1 14 6.1v5.4A1.5 1.5 0 0 1 12.5 13h-9A1.5 1.5 0 0 1 2 11.5z', fill: 'none', stroke: 'currentColor', strokeWidth: 1.3, strokeLinejoin: 'round' }))
-      },
-      session() {
-        return h('svg', { viewBox: '0 0 16 16', width: 13, height: 13, 'aria-hidden': true, className: 'mo-row-icon' },
-          h('path', { d: 'M3 3.6h10v6.2H7.2L4.4 12.4v-2.6H3z', fill: 'none', stroke: 'currentColor', strokeWidth: 1.3, strokeLinejoin: 'round' }))
       },
       plan() {
         return h('svg', { viewBox: '0 0 16 16', width: 14, height: 14, 'aria-hidden': true },
@@ -1310,78 +1282,30 @@ window.__ModuleLoader__.load({
         return h('svg', { viewBox: '0 0 16 16', width: 12, height: 12, 'aria-hidden': true, className: 'mo-row-icon' },
           h('path', { d: 'M4.5 3.5v9M11.5 3.5v9M4.5 8h7', fill: 'none', stroke: 'currentColor', strokeWidth: 1.4, strokeLinecap: 'round' }))
       },
-      outline(open) {
-        return h('svg', { viewBox: '0 0 16 16', width: 15, height: 15, 'aria-hidden': true },
-          h('path', { d: 'M2.5 3.5h2M2.5 8h2M2.5 12.5h2', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round' }),
-          h('path', { d: 'M6.5 3.5H13.5M7.5 8H13.5M7.5 12.5H13.5', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round' }),
-          open ? null : h('path', { d: 'M11 1.5 14.5 8 11 14.5', fill: 'none', stroke: 'currentColor', strokeWidth: 1.2, opacity: 0.5 }))
-      },
-      back() {
-        return h('svg', { viewBox: '0 0 16 16', width: 13, height: 13, 'aria-hidden': true },
-          h('path', { d: 'M10 8H3.5M6.5 4.5 3 8l3.5 3.5', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round' }))
-      },
-      outlineNav(size) {
-        const edge = typeof size === 'number' && size > 0 ? size : 18
-        return h('svg', { viewBox: '0 0 16 16', width: edge, height: edge, 'aria-hidden': true },
-          h('path', { d: 'M2.5 3.5h2M2.5 8h2M2.5 12.5h2', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round' }),
-          h('path', { d: 'M6.5 3.5H13.5M7.5 8H13.5M7.5 12.5H13.5', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round' }))
-      },
-      refresh() {
-        return h('svg', { viewBox: '0 0 16 16', width: 14, height: 14, 'aria-hidden': true },
-          h('path', {
-            d: 'M13 8a5 5 0 1 1-1.5-3.6M13 2.8V5h-2.2',
-            fill: 'none',
-            stroke: 'currentColor',
-            strokeWidth: 1.4,
-            strokeLinecap: 'round',
-            strokeLinejoin: 'round',
-          }))
-      },
-      external() {
-        return h('svg', { viewBox: '0 0 16 16', width: 14, height: 14, 'aria-hidden': true },
-          h('path', { d: 'M6.5 3H3.6v9.4H13V9.5', fill: 'none', stroke: 'currentColor', strokeWidth: 1.3, strokeLinecap: 'round', strokeLinejoin: 'round' }),
-          h('path', { d: 'M8.5 3H13v4.5M13 3 7.8 8.2', fill: 'none', stroke: 'currentColor', strokeWidth: 1.3, strokeLinecap: 'round', strokeLinejoin: 'round' }))
-      },
-    }
-
-    /** One icon button in a panel header. */
-    function IconButton(props) {
-      const { onClick, title, active, children } = props
-      return h('button', {
-        type: 'button',
-        className: 'mo-iconbtn',
-        onClick,
-        title,
-        'aria-label': title,
-        'aria-pressed': active === undefined ? undefined : active,
-        'data-active': active === true ? 'true' : undefined,
-      }, children)
     }
 
     /**
-     * The outline tree: workspaces, then their sessions, then open Markdown
-     * files, then each file's headings. Group rows toggle their children; a file
-     * row opens the document, while its chevron toggles only its headings.
+     * One Session's document list: its plans and opened Markdown files, then
+     * each document's headings. A file row opens the document, while its
+     * chevron toggles only its headings.
      */
     function OutlineRail(props) {
       const {
-        groups, activeAddress, activeLine, collapsedOf, onToggleNode, onOpenFile, onOpenHeading,
-        headingsOf, loadingOf, width, fileCount, labels, onClose, onOpenSession, flat,
+        files, activeAddress, activeLine, collapsedOf, onToggleNode, onOpenFile, onOpenHeading,
+        headingsOf, loadingOf, width, fileCount, labels, onClose,
       } = props
       const rows = []
       const toggleLabel = (collapsed) => (collapsed ? labels.expand : labels.collapse)
-      const fileRow = (entry, pad) => {
-        const out = []
+      for (const entry of files) {
         const fileKey = `f:${entry.address}`
         const fileCollapsed = collapsedOf(fileKey)
         const active = entry.address === activeAddress
         const headings = headingsOf(entry.address)
         const loading = loadingOf(entry.address)
         const hasChildren = headings === undefined ? loading : headings.length > 0
-        out.push(h('div', {
+        rows.push(h('div', {
           key: fileKey,
           className: 'mo-row mo-row-file',
-          style: { paddingLeft: pad },
           'data-active': active ? 'true' : undefined,
         },
           hasChildren
@@ -1410,22 +1334,21 @@ window.__ModuleLoader__.load({
               ? null
               : h('span', { className: 'mo-row-dir', title: entry.path === '' ? entry.hint : dirnameOf(entry.path) }, entry.hint),
             loading ? h('span', { className: 'mo-row-badge' }, '…') : null)))
-        if (fileCollapsed) return out
+        if (fileCollapsed) continue
         if (headings === undefined) {
           if (loading) {
-            out.push(h('div', { key: `${fileKey}-pending`, className: 'mo-row mo-row-hint', style: { paddingLeft: pad + 16 } },
-              labels.loading))
+            rows.push(h('div', { key: `${fileKey}-pending`, className: 'mo-row mo-row-hint' }, labels.loading))
           }
-          return out
+          continue
         }
         for (let index = 0; index < headings.length; index += 1) {
           const heading = headings[index]
           const isActive = active && heading.line === activeLine
-          out.push(h('button', {
+          rows.push(h('button', {
             key: `${fileKey}-h${heading.line}-${index}`,
             type: 'button',
             className: 'mo-row mo-row-heading',
-            style: { paddingLeft: Math.max(0, pad + 12) + Math.min(heading.level - 1, 4) * 12 },
+            style: { paddingLeft: 26 + Math.min(heading.level - 1, 4) * 12 },
             onClick: () => {
               onOpenHeading(entry.address, heading.line)
             },
@@ -1435,68 +1358,6 @@ window.__ModuleLoader__.load({
           },
             h('span', { className: 'mo-row-headingmark', 'data-level': String(heading.level) }, `H${heading.level}`),
             h('span', { className: 'mo-row-label' }, heading.text)))
-        }
-        return out
-      }
-      if (flat === true) {
-        for (const group of groups) {
-          for (const entry of group.files) rows.push(...fileRow(entry, 14))
-        }
-      } else {
-        for (const group of groups) {
-          const workspaceKey = group.key
-          const workspaceCollapsed = collapsedOf(workspaceKey)
-          rows.push(h('button', {
-            key: workspaceKey,
-            type: 'button',
-            className: 'mo-row mo-row-workspace',
-            onClick: () => onToggleNode(workspaceKey),
-            title: group.path === undefined ? group.title : group.path,
-            'aria-expanded': !workspaceCollapsed,
-            'aria-label': `${toggleLabel(workspaceCollapsed)} ${group.title}`,
-          },
-            h('span', { className: 'mo-chevronbox' }, SVG.chevron(workspaceCollapsed ? undefined : 'open')),
-            SVG.workspace(),
-            h('span', { className: 'mo-row-label' }, group.title),
-            h('span', { className: 'mo-row-count' }, String(group.fileCount))))
-          if (workspaceCollapsed) continue
-          for (const session of group.sessions) {
-            const sessionKey = `s:${group.key}:${session.sessionId}`
-            const sessionCollapsed = collapsedOf(sessionKey)
-            rows.push(h('div', {
-              key: sessionKey,
-              className: 'mo-row mo-row-session',
-              style: { paddingLeft: 14 },
-            },
-              h('button', {
-                type: 'button',
-                className: 'mo-rowtoggle',
-                onClick: () => onToggleNode(sessionKey),
-                title: toggleLabel(sessionCollapsed),
-                'aria-label': `${toggleLabel(sessionCollapsed)} ${session.title}`,
-                'aria-expanded': !sessionCollapsed,
-              }, h('span', { className: 'mo-chevronbox' }, SVG.chevron(sessionCollapsed ? undefined : 'open'))),
-              h('button', {
-                type: 'button',
-                className: 'mo-rowbody',
-                onClick: () => onToggleNode(sessionKey),
-                title: session.title,
-              },
-                SVG.session(),
-                h('span', { className: 'mo-row-label' }, session.title)),
-              onOpenSession === undefined ? null : h('button', {
-                type: 'button',
-                className: 'mo-rowaction',
-                onClick: (event) => {
-                  event.stopPropagation()
-                  onOpenSession(session.sessionId)
-                },
-                title: labels.backToSession,
-                'aria-label': labels.backToSession,
-              }, SVG.back())))
-            if (sessionCollapsed) continue
-            for (const entry of session.files) rows.push(...fileRow(entry, 26))
-          }
         }
       }
       return h('aside', { className: 'mo-tree', style: { width } },
@@ -1516,14 +1377,9 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * The Markdown outline page: the left Sidebar entry opens it, the tree sits
-     * on the left under the "Markdown 大纲" title, and the selected file's
-     * content fills the right pane. Directory rows collapse like a file tree.
-     */
-    /**
-     * One document inside the preview page or the Session view: the file's
-     * Markdown read through the shared catalog and the standard resource hook,
-     * so it reloads when the file changes on disk.
+     * One document inside the Session view: the file's Markdown read through the
+     * shared catalog and the standard resource hook, so it reloads when the file
+     * changes on disk.
      * @param props - resource address, resource hook, copy, and selection target.
      */
     function PageDocument(props) {
@@ -1758,8 +1614,7 @@ window.__ModuleLoader__.load({
         h('style', null, CSS),
         h('div', { className: 'mo-page-rail' },
           h(OutlineRail, {
-            flat: true,
-            groups: [{ key: 'session', files: rows }],
+            files: rows,
             activeAddress: selected,
             activeLine: selection === undefined ? undefined : selection.line,
             collapsedOf: ui.collapsed,
@@ -1821,7 +1676,6 @@ window.__ModuleLoader__.load({
       const line = params !== undefined && params !== null && typeof params.line === 'number' ? params.line : undefined
       useEffect(() => {
         if (parsePlanAddress(address) !== undefined) ui.addPlan(sessionId, address)
-        else ui.selectPage(address, line)
         ui.selectDocument(sessionId, address, line)
         try {
           pluginCtx.uiConversation.binding(sessionId).activate(ID)
@@ -1832,141 +1686,6 @@ window.__ModuleLoader__.load({
         } catch (_unavailable) { /* The record may already be gone. */ }
       }, [address])
       return null
-    }
-
-    /**
-     * Group catalog entries into workspace → session → file for the page tree.
-     * The workspace is the one whose session ids name the entry's authorizing
-     * Session; an entry whose workspace is unknown falls under one group.
-     * @param entries - flattened catalog entries.
-     * @param workspaces - workspace items, when the hook has them.
-     * @param sessionsById - Session records, when the hook has them.
-     * @param t - translate function.
-     * @returns groups in display order.
-     */
-    function groupOutline(entries, workspaces, sessionsById, t) {
-      const groups = new Map()
-      const workspaceOf = (sessionId) => {
-        for (const workspace of workspaces === undefined ? [] : workspaces) {
-          if (Array.isArray(workspace.sessionIds) && workspace.sessionIds.includes(sessionId)) return workspace
-        }
-        return undefined
-      }
-      let order = 0
-      for (const entry of entries) {
-        const sessionId = entry.sidebarSessionId === undefined ? entry.sessionId : entry.sidebarSessionId
-        const workspace = workspaceOf(sessionId)
-        const groupKey = workspace === undefined ? 'no-workspace' : workspace.workspaceId
-        if (!groups.has(groupKey)) {
-          groups.set(groupKey, {
-            key: groupKey,
-            title: workspace === undefined ? t('tree.noWorkspace') : workspace.title,
-            path: workspace === undefined ? undefined : workspace.path,
-            fileCount: 0,
-            sessions: new Map(),
-          })
-        }
-        const group = groups.get(groupKey)
-        if (!group.sessions.has(sessionId)) {
-          const session = sessionsById === undefined ? undefined : sessionsById[sessionId]
-          group.sessions.set(sessionId, {
-            sessionId,
-            title: session === undefined ? shortId(sessionId) : session.displayTitle,
-            files: [],
-          })
-        }
-        group.sessions.get(sessionId).files.push({
-          address: entry.address,
-          name: entry.name,
-          path: entry.path,
-          hint: entry.path.includes('/') ? dirnameOf(entry.path).replace(/\/+$/, '') : '',
-          order: order += 1,
-        })
-        group.fileCount += 1
-      }
-      return [...groups.values()].map((group) => ({
-        key: group.key,
-        title: group.title,
-        path: group.path,
-        fileCount: group.fileCount,
-        sessions: [...group.sessions.values()].sort((left, right) => left.title.localeCompare(right.title)),
-      })).sort((left, right) => left.title.localeCompare(right.title))
-    }
-
-    function OutlinePage(props) {
-      const { useWorkspaces, useSessions, useResource, t: localeT } = props
-      const fallbackSelector = useCallback(() => undefined, [])
-      const useWs = typeof useWorkspaces === 'function' ? useWorkspaces : fallbackSelector
-      const useSe = typeof useSessions === 'function' ? useSessions : fallbackSelector
-      const t = typeof localeT === 'function' ? localeT : boundT
-      const catalogSnapshot = useSyncExternalStore(catalog.subscribe, catalog.getSnapshot)
-      const uiSnapshot = useSyncExternalStore(ui.subscribe, ui.getSnapshot)
-      const workspaces = useWs((state) => (state === undefined ? undefined : state.items))
-      const sessionsById = useSe((state) => (state === undefined ? undefined : state.byId))
-      const selected = uiSnapshot.pageAddress
-
-      const groups = useMemo(
-        () => groupOutline(catalog.allEntries(), workspaces, sessionsById, t),
-        [catalogSnapshot.revision, workspaces, sessionsById, t],
-      )
-
-      // Open the newest file when the page is shown without a selection.
-      useEffect(() => {
-        if (ui.pageState() !== undefined) return
-        const first = catalog.allEntries()[0]
-        if (first !== undefined) ui.selectPage(first.address)
-      }, [catalogSnapshot.revision])
-
-      const openFile = (address) => ui.selectPage(address)
-      const openHeading = (address, line) => ui.selectPage(address, line)
-      const openSession = (sessionId) => {
-        try {
-          pluginCtx.uiWorkspace.openSession(sessionId)
-        } catch (_unavailable) { /* The Session may have been deleted. */ }
-        try {
-          pluginCtx.layout.selectPanel('conversation')
-        } catch (_unavailable) { /* The shell owns the main panel. */ }
-      }
-
-      return h('div', { className: 'mo-page' },
-        h('style', null, CSS),
-        h('div', { className: 'mo-page-rail' },
-          h(OutlineRail, {
-            groups,
-            activeAddress: selected,
-            activeLine: uiSnapshot.pageLine,
-            collapsedOf: ui.collapsed,
-            onToggleNode: ui.toggleNode,
-            onOpenFile: openFile,
-            onOpenHeading: openHeading,
-            headingsOf: (targetAddress) => catalog.headingsOf(targetAddress),
-            loadingOf: (targetAddress) => {
-              const cached = catalog.docOf(targetAddress)
-              return cached === undefined || cached.status === 'loading'
-            },
-            width: '100%',
-            fileCount: groups.reduce((total, group) => total + group.fileCount, 0),
-            onOpenSession: openSession,
-            labels: {
-              title: t('outline.title'),
-              count: t('tree.count'),
-              empty: t('tree.empty'),
-              loading: t('tree.loading'),
-              expand: t('tree.expand'),
-              collapse: t('tree.collapse'),
-              backToSession: t('action.backToSession'),
-            },
-          })),
-        selected === undefined
-          ? h('div', { className: 'mo-page-empty' }, h('span', null, t('tree.empty')))
-          : h(PageDocument, {
-            key: selected,
-            address: selected,
-            useResource,
-            t,
-            line: uiSnapshot.pageLine,
-            select: (target, targetLine) => ui.selectPage(target, targetLine),
-          }))
     }
 
     /**
@@ -2121,7 +1840,7 @@ window.__ModuleLoader__.load({
     // -------------------------------------------------------------- plugin
 
     /** Client services this plugin requires before it activates. */
-    const inject = ['slots', 'locale', 'sidebarRightTabs', 'sidebarRight', 'remote', 'remote.workspaceFiles', 'uiWorkspace', 'layout', 'uiConversation']
+    const inject = ['slots', 'locale', 'sidebarRightTabs', 'sidebarRight', 'remote', 'remote.workspaceFiles', 'uiConversation']
 
     let catalog
     let ui
@@ -2173,18 +1892,6 @@ window.__ModuleLoader__.load({
         locale: NS,
         label: () => boundT('outline.title'),
       }, SessionDocumentsView)), 'markdown-outline: session view')
-      ctx.effect(() => ctx.slots.inject('main', () => ctx.slots.register({
-        name: 'main',
-        key: ID,
-        locale: NS,
-      }, OutlinePage)), 'markdown-outline: outline page')
-      ctx.effect(() => ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
-        name: 'sidebar.panellist',
-        id: ID,
-        order: 40,
-        label: () => boundT('outline.title'),
-        locale: NS,
-      }, (props) => SVG.outlineNav(typeof props.size === 'number' ? props.size : 18))), 'markdown-outline: sidebar entry')
       ctx.effect(() => {
         const unsubscribe = ctx.sidebarRight.openTabs.subscribe(() => { catalog.sync() })
         catalog.sync()

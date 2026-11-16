@@ -1,53 +1,53 @@
-# dsh-markdown-outline — Markdown outline preview
+# dsh-markdown-outline — Markdown preview for the Session
 
-A DSH Web bundle that claims `*.md` file addresses in the right Sidebar and
-draws them as an outline tree plus the rendered document.
+A DSH Web bundle that turns Markdown files into a **Session View** beside the
+Conversation: every plan and Markdown file the Session has produced or opened
+is listed on the left, and the selected document renders on the right.
 
 ## What it does
 
-- **Claims Markdown files.** Registers an `extension`-band right-Sidebar tab type
-  for `dsh-resource://file/session/<sessionId>/…` addresses whose path ends in
-  `.md`, `.markdown`, `.mdown`, or `.mdx`. Opening a Markdown link from a Chat
-  row, a tool result, a file tree, or a deliverable opens this panel instead of
-  the built-in document preview. Every other file type keeps its existing viewer.
-- **Outline on the left.** The rail lists each file this type has opened, grouped
-  as workspace → session → file → headings (`H1`–`H6`, including setext headings).
-  A file stays listed after its tab closes, so it can be opened again from the
-  outline. The tree is recorded per Sidebar Session; two sessions keep separate
-  catalogs. Collapsing a workspace, session, or file is remembered in
-  `localStorage` (`dsh.markdown-outline.ui.v1`), as is the rail's visibility.
-- **Document on the right.** Clicking a file row opens or reveals its tab;
-  clicking a heading scrolls the current document, or opens the other file with
-  that source line as its navigation parameter. The rendered Markdown covers ATX
-  and setext headings, paragraphs (CommonMark soft and hard breaks), fenced and
-  indented code with a copy control, nested ordered/unordered and task lists,
-  tables with alignment, blockquotes, rules, inline code, emphasis, strikethrough,
-  links, autolinks, images served through the authenticated `/api/file` route,
-  and a leading YAML frontmatter block as a key/value list. Relative links to
-  other files open through the Sidebar; `#fragment` links scroll to a heading.
+- **Claims Markdown files, then hands them to the view.** Registers an
+  `extension`-band right-Sidebar tab type for `dsh-resource://file/session/…`
+  addresses ending in `.md`, `.markdown`, `.mdown`, or `.mdx`, and for
+  `dsh-resource://plan/…` plan resources. Opening one from a Chat file link, a
+  tool result, a file tree, a deliverable card, or a plan card does not open a
+  reader beside the chat: the transient tab hands the document to the Session
+  View, selects it there, and closes itself.
+- **A Session View, beside Conversation.** `conversation.view` adds a
+  **Markdown 预览** tab to the Session's view row (Conversation, Trajectory,
+  Context, Team, …). The view lists this Session's plans and Markdown files,
+  flat and with no workspace level, each expandable into its headings (`H1`–`H6`,
+  including setext headings). Plans show their title once the plan resource has
+  been read.
+- **Document on the right.** Selecting a file or heading renders its Markdown
+  (ATX and setext headings, paragraphs with CommonMark soft and hard breaks,
+  fenced and indented code with a copy control, nested ordered/unordered and
+  task lists, tables with alignment, blockquotes, rules, inline code, emphasis,
+  strikethrough, links, autolinks, images through the authenticated `/api/file`
+  route, and a leading YAML frontmatter block). Heading clicks scroll to the
+  source line; relative file links select the target file in the same view.
+- **Plans are Markdown too.** A plan resource is read through the registered
+  plan provider, so a submitted plan renders exactly like a file, with its title
+  and headings in the tree.
 - **Latest content.** Opens read the file through `ctx.remote.workspaceFiles` in
   pages until EOF (bounded at 4 MiB / 40 pages) and record the file's version.
   The standard `useResource('file')` hook reports the version the Sidebar keeps
-  live for the tab, so a version change re-reads the document while it is open,
-  a page read that meets a newer version restarts, and reopening a tab compares
-  the cached version before showing old text. A short "File updated" chip marks
-  an automatic refresh. A manual reload button and the page refresh command
-  re-read on demand.
-- **Reading position** is remembered per file address, and survives a reload or
-  switching to another file and back.
+  live, so a version change re-reads the document while it is open; a page read
+  that meets a newer version restarts.
+- **Per-Session memory.** Each Session keeps its own opened-document list and
+  selection; the view shows only that Session's documents.
 
 ## Limitations
 
-- The panel is a reader: it does not edit files.
+- The view is a reader: it does not edit files.
+- The list covers documents this plugin has seen opened or redirected, not every
+  Markdown file in the workspace (use the files tab for the directory tree).
+- A plan or file that is opened outside this plugin's tab type (for example an
+  absolute `dsh-resource://file/absolute/…` address) is not claimed.
 - The renderer is a self-contained Markdown subset; reference-style links,
   footnotes, raw HTML blocks, math, and syntax highlighting render as plain text.
-- The catalog lists files opened through this type, not every Markdown file in
-  the workspace (use the `files` tab for the full directory tree).
-- History is kept in memory per Sidebar Session; only files whose tabs are open
-  are restored after a page reload.
 - Reads stop at the configured Host page limits, 4 MiB, or 40 pages, and say so
   in the document header area.
-
 ## Install
 
 The package is a DSH bundle: `dsh.bundle.patch` inserts one Loader row and
@@ -66,7 +66,7 @@ opened before a package rename keep their body.
 | File | Role |
 |---|---|
 | `index.js` | Host half: a no-op `apply()`; the row exists so the Web carrier serves the client bundle. |
-| `client.js` | Browser half: tab type, outline catalog, Markdown renderer, and panel component. React is the only module it requests. |
+| `client.js` | Browser half: tab type, Session view, document list, Markdown renderer, and plan support. React is the only module it requests. |
 | `cordis.patch.yml` | Inserts the plugin row `markdown-outline`. |
 | `locale/*.json` | Plugin Manager title, description, and detail page. |
 | `icon.svg`, `docs/` | Display artwork and the single-image detail page. |

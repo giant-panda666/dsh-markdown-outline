@@ -104,16 +104,12 @@ if (typeof mod.apply !== 'function') throw new Error('plugin has no apply')
 let tabDefinition
 let componentRegistration
 let titleRegistration
-let pageRegistration
-let entryRegistration
 let viewRegistration
 const viewActivations = []
 const opened = []
 let openTabsSnapshot = []
 const openTabsListeners = []
 const disposeFns = []
-const sessionOpens = []
-const panelSelects = []
 let readCalls = 0
 
 const ctx = {
@@ -142,15 +138,13 @@ const ctx = {
   },
   slots: {
     inject(name, callback) {
-      const known = ['sidebar.right.pane.tab', 'sidebar.right.pane.tab.title', 'conversation.view', 'main', 'sidebar.panellist']
+      const known = ['sidebar.right.pane.tab', 'sidebar.right.pane.tab.title', 'conversation.view']
       if (!known.includes(name)) throw new Error(`unexpected slot ${name}`)
       callback()
     },
     register(options, component) {
       if (options.name === 'sidebar.right.pane.tab.title') titleRegistration = { options, component }
       else if (options.name === 'conversation.view') viewRegistration = { options, component }
-      else if (options.name === 'main') pageRegistration = { options, component }
-      else if (options.name === 'sidebar.panellist') entryRegistration = { options, component }
       else componentRegistration = { options, component }
       return () => {}
     },
@@ -159,12 +153,6 @@ const ctx = {
     binding(id) {
       return { activate(view) { viewActivations.push([id, view]) } }
     },
-  },
-  uiWorkspace: {
-    openSession(id) { sessionOpens.push(id) },
-  },
-  layout: {
-    selectPanel(id) { panelSelects.push(id) },
   },
   remote: {
     workspaceFiles: {
@@ -196,8 +184,6 @@ mod.apply(ctx)
 if (tabDefinition === undefined) throw new Error('tab type was not registered')
 if (componentRegistration === undefined) throw new Error('tab body was not registered')
 if (titleRegistration === undefined) throw new Error('tab title was not registered')
-if (pageRegistration === undefined) throw new Error('outline page was not registered')
-if (entryRegistration === undefined) throw new Error('sidebar entry was not registered')
 if (viewRegistration === undefined) throw new Error('session view was not registered')
 if (tabDefinition.priority !== 'extension') throw new Error(`unexpected band ${tabDefinition.priority}`)
 if (!tabDefinition.patterns.includes('*.md')) throw new Error('patterns do not claim *.md')
@@ -206,6 +192,7 @@ if (tabDefinition.canOpen('dsh-resource://file/session/sess-1/a/b.txt') !== fals
 if (tabDefinition.canOpen('dsh-resource://file/absolute/a/b.md') !== false) throw new Error('canOpen accepted an absolute address')
 if (tabDefinition.canOpen('dsh-resource://plan/sess-1/call-9') !== true) throw new Error('canOpen rejected a plan address')
 if (tabDefinition.title(ADDRESS) !== 'demo.md') throw new Error(`unexpected title ${tabDefinition.title(ADDRESS)}`)
+if (viewRegistration.options.id !== 'dsh-markdown-outline') throw new Error(`unexpected view id ${viewRegistration.options.id}`)
 
 // The catalog syncs from the open-tab inventory during apply and starts reading.
 await new Promise((resolve) => setTimeout(resolve, 0))
@@ -229,19 +216,8 @@ const props = {
   sessionId: 'sess-1',
   useTabInfo: () => ({ sidebar: { expanded: true, fullscreen: false }, panel: { id: 'pane-1', isFloating: false }, tab }),
   useResource: () => ({ status: 'live', value: { absolutePath: '/ws/docs/demo.md', version: 'v1', bytes: 512 } }),
-  useWorkspaces: (selector) => selector({
-    items: [{ workspaceId: 'w1', title: 'demo-workspace', path: '/ws', sessionIds: ['sess-1'] }],
-  }),
-  useSessions: (selector) => selector({ byId: { 'sess-1': { id: 'sess-1', displayTitle: 'Demo session' } } }),
   t: (key) => key,
 }
-
-// The tab body only hands the file to the outline page and closes itself.
-const redirected = componentRegistration.component(props)
-if (redirected !== null) throw new Error('the tab body should render nothing and redirect')
-if (viewActivations.length === 0) throw new Error('the tab body did not activate the session view')
-// The page then shows the file the redirect selected.
-const rendered = pageRegistration.component(props)
 
 function walk(node, visit) {
   if (node === null || node === undefined || typeof node === 'boolean') return
@@ -249,12 +225,10 @@ function walk(node, visit) {
   if (Array.isArray(node)) { node.forEach((child) => walk(child, visit)); return }
   if (typeof node !== 'object') return
   if (typeof node.type === 'function') {
-    // Render function components the way React would, so their markup is visited.
     walk(node.type(node.props === undefined ? {} : node.props), visit)
     return
   }
   if (node.type === undefined || typeof node.type === 'symbol') {
-    // A fragment (React.Fragment has no tag name).
     for (const child of node.children) walk(child, visit)
     walk(node.props.children, visit)
     return
@@ -281,158 +255,85 @@ const collect = (root, predicate) => {
   visit(root)
   return found
 }
-const classes = new Set()
-const texts = []
-walk(rendered, (node) => {
-  if (typeof node.type === 'string' && typeof node.props.className === 'string') {
-    node.props.className.split(/\s+/).forEach((name) => classes.add(name))
-  }
-  for (const child of node.children) {
-    if (typeof child === 'string' || typeof child === 'number') texts.push(String(child))
-  }
-})
 
-for (const expected of ['mo-page', 'mo-page-doc', 'mo-head', 'mo-scroll', 'mo-md']) {
-  if (!classes.has(expected)) throw new Error(`the document panel is missing .${expected}`)
+const classSet = (root) => {
+  const set = new Set()
+  walk(root, (node) => {
+    if (typeof node.type === 'string' && typeof node.props.className === 'string') {
+      node.props.className.split(/\s+/).forEach((name) => set.add(name))
+    }
+  })
+  return set
 }
-const drawer = pageRegistration.component(props)
-const drawerClasses = new Set()
-const drawerTexts = []
-walk(drawer, (node) => {
-  if (typeof node.type === 'string' && typeof node.props.className === 'string') {
-    node.props.className.split(/\s+/).forEach((name) => drawerClasses.add(name))
-  }
-  for (const child of node.children) if (typeof child === 'string') drawerTexts.push(child)
-})
-for (const expected of ['mo-page', 'mo-tree', 'mo-row-workspace', 'mo-row-session', 'mo-row-file', 'mo-row-heading']) {
-  if (!drawerClasses.has(expected)) throw new Error(`the outline page is missing .${expected}`)
+const textsOf = (root) => {
+  const out = []
+  walk(root, (node) => {
+    for (const child of node.children) if (typeof child === 'string') out.push(child)
+  })
+  return out
 }
-const drawerJoined = drawerTexts.join(' ')
-for (const expected of ['demo-workspace', 'Demo session', 'demo.md']) {
-  if (!drawerJoined.includes(expected)) throw new Error(`the outline page is missing ${JSON.stringify(expected)}: ${JSON.stringify(drawerTexts.slice(0, 20))}`)
+const fileRowsOf = (root) => collect(root, (node) => typeof node.type === 'string' && node.props.className === 'mo-row mo-row-file')
+const fileBodiesOf = (root) => fileRowsOf(root).flatMap((row) => collect(row, (node) => node.type === 'button' && node.props.className === 'mo-rowbody'))
+const renderView = (override) => viewRegistration.component({ ...props, ...override, sessionId: 'sess-1' })
+const redirect = (override) => componentRegistration.component({ ...props, ...override, sessionId: 'sess-1' })
+
+// The tab body hands the document to the Session view, which becomes the reading surface.
+const redirected = redirect({})
+if (redirected !== null) throw new Error('the tab body should render nothing and redirect')
+if (!viewActivations.some(([id, view]) => id === 'sess-1' && view === 'dsh-markdown-outline')) {
+  throw new Error(`the tab body did not activate the session view: ${JSON.stringify(viewActivations)}`)
 }
-const headingTexts = []
-walk(rendered, (node) => {
-  if (typeof node.type === 'string' && /^h[1-6]$/.test(node.type)) {
-    headingTexts.push(node.children.filter((child) => typeof child === 'string').join(''))
-  }
-})
-const joined = texts.join(' ')
-for (const expected of ['Overview', 'Details', 'Deep heading']) {
-  if (!joined.includes(expected) && !headingTexts.some((text) => text.includes(expected))) {
-    throw new Error(`rendered output is missing ${JSON.stringify(expected)}; got ${JSON.stringify(texts.slice(0, 30))}`)
-  }
+
+// The view shows the file the redirect selected, with its outline and document.
+const view = renderView({})
+const viewClasses = classSet(view)
+for (const expected of ['mo-page', 'mo-tree', 'mo-page-doc', 'mo-head', 'mo-scroll', 'mo-md']) {
+  if (!viewClasses.has(expected)) throw new Error(`the session view is missing .${expected}`)
 }
-if (readCalls === 0) throw new Error('the catalog never read the file')
-const headingLines = collect(rendered, (node) => typeof node.type === 'string' && /^h[1-6]$/.test(node.type))
+for (const expected of ['demo.md', 'Overview', 'Details', 'Deep heading']) {
+  if (!textsOf(view).join(' ').includes(expected)) throw new Error(`the session view is missing ${JSON.stringify(expected)}`)
+}
+const headingLines = collect(view, (node) => typeof node.type === 'string' && /^h[1-6]$/.test(node.type))
   .map((node) => node.props['data-md-line'])
 if (headingLines.join(',') !== '6,10,17') throw new Error(`unexpected heading source lines: ${headingLines.join(',')}`)
-if (!classes.has('mo-md-code') && !classes.has('mo-md-code-head')) throw new Error('code block was not rendered')
-if (!classes.has('mo-md-frontmatter')) throw new Error('frontmatter block was not rendered')
-if (!classes.has('mo-md-img')) throw new Error('image was not resolved')
-if (!classes.has('mo-md-link')) throw new Error('inline link was not rendered')
+if (!viewClasses.has('mo-md-code') && !viewClasses.has('mo-md-code-head')) throw new Error('code block was not rendered')
+if (!viewClasses.has('mo-md-frontmatter')) throw new Error('frontmatter block was not rendered')
+if (!viewClasses.has('mo-md-img')) throw new Error('image was not resolved')
+if (!viewClasses.has('mo-md-link')) throw new Error('inline link was not rendered')
+if (readCalls === 0) throw new Error('the catalog never read the file')
 
-// Simulate a tree interaction: a heading in another open file opens with a line.
+// Selecting a second opened file switches the document pane.
 openTabsSnapshot = [
   { sessionId: 'sess-1', tabId: 'tab-1', kind: 'markdown-outline', contentId: ADDRESS },
   { sessionId: 'sess-1', tabId: 'tab-2', kind: 'markdown-outline', contentId: 'dsh-resource://file/session/sess-1/docs/second.md' },
 ]
 openTabsListeners.forEach((listener) => listener())
 await new Promise((resolve) => setTimeout(resolve, 0))
-
-const rerenderedDrawer = pageRegistration.component(props)
-const fileRows = collect(rerenderedDrawer, (node) => typeof node.type === 'string' && node.props.className === 'mo-row mo-row-file')
-if (fileRows.length !== 2) throw new Error(`expected two file rows, found ${fileRows.length}`)
-const fileRowContainers = collect(rerenderedDrawer, (node) => typeof node.type === 'string' && node.props.className === 'mo-row mo-row-file')
-const fileBodies = fileRowContainers.flatMap((row) => collect(row, (node) => node.type === 'button' && node.props.className === 'mo-rowbody'))
-if (fileBodies.length !== 2) throw new Error(`expected two file open buttons, found ${fileBodies.length}`)
-fileBodies[1].props.onClick()
-const afterSelect = pageRegistration.component(props)
-const pageClasses = new Set()
-walk(afterSelect, (node) => {
-  if (typeof node.type === 'string' && typeof node.props.className === 'string') node.props.className.split(/\s+/).forEach((name) => pageClasses.add(name))
-})
-if (!pageClasses.has('mo-page') || !pageClasses.has('mo-page-rail')) throw new Error('the outline page lost its tree rail')
-if (!pageClasses.has('mo-page-doc') || !pageClasses.has('mo-md')) throw new Error('selecting a tree row did not show the document')
+const twoFiles = renderView({})
+if (fileRowsOf(twoFiles).length !== 2) throw new Error(`expected two file rows, found ${fileRowsOf(twoFiles).length}`)
+const bodies = fileBodiesOf(twoFiles)
+if (bodies.length !== 2) throw new Error(`expected two file open buttons, found ${bodies.length}`)
+bodies[1].props.onClick()
+const afterSelect = renderView({})
+const afterSelectClasses = classSet(afterSelect)
+if (!afterSelectClasses.has('mo-page-doc') || !afterSelectClasses.has('mo-md')) throw new Error('selecting a row did not show the document')
 const docTitles = collect(afterSelect, (node) => typeof node.type === 'string' && node.props.className === 'mo-title')
   .map((node) => node.children.join(''))
 if (!docTitles.some((title) => title.includes('second.md'))) throw new Error(`the document pane did not switch files: ${JSON.stringify(docTitles)}`)
-// The Session view shows this session's documents beside the conversation.
-const view = viewRegistration.component({ ...props, sessionId: 'sess-1' })
-const viewClasses = new Set()
-walk(view, (node) => {
-  if (typeof node.type === 'string' && typeof node.props.className === 'string') node.props.className.split(/\s+/).forEach((name) => viewClasses.add(name))
-})
-for (const expected of ['mo-page', 'mo-tree', 'mo-page-doc', 'mo-md']) {
-  if (!viewClasses.has(expected)) throw new Error(`the session view is missing .${expected}`)
-}
-const viewRows = collect(view, (node) => typeof node.type === 'string' && node.props.className === 'mo-row mo-row-file')
-if (viewRows.length !== 2) throw new Error(`the session view did not list its opened files: ${viewRows.length}`)
-
-// A plan opens the view too, and its Markdown becomes the selected document.
-const planAddress = 'dsh-resource://plan/sess-1/call-9'
-const planTab = { ...tab, id: 'tab-plan', title: 'Plan', contentId: planAddress,
-  navigation: { address: planAddress, params: undefined, revision: 0 } }
-componentRegistration.component({
-  ...props,
-  useTabInfo: () => ({ sidebar: { expanded: true, fullscreen: false }, panel: { id: 'pane-1', isFloating: false }, tab: planTab }),
-})
-const planProps = {
-  ...props,
-  useResource: (address) => address.startsWith('dsh-resource://plan/')
-    ? { status: 'live', value: { callId: 'call-9', title: 'Plan title', markdown: '# Plan title\n\n## Step\n' }, version: 'v1' }
-    : { status: 'live', value: { absolutePath: '/ws/docs/demo.md', version: 'v1' } },
-}
-const planView = viewRegistration.component({ ...planProps, sessionId: 'sess-1' })
-const planClasses = new Set()
-walk(planView, (node) => {
-  if (typeof node.type === 'string' && typeof node.props.className === 'string') node.props.className.split(/\s+/).forEach((name) => planClasses.add(name))
-})
-if (!planClasses.has('mo-md')) throw new Error('the plan Markdown did not render in the session view')
-const planTitles = collect(planView, (node) => typeof node.type === 'string' && node.props.className === 'mo-title')
-  .map((node) => node.children.join(''))
-if (!planTitles.some((title) => title.includes('Plan title'))) throw new Error(`the plan title did not reach the document pane: ${JSON.stringify(planTitles)}`)
-const openCall = undefined
-
-// The tab chip renders the markdown glyph before the captured title.
-// The session row carries a back control that returns to its conversation.
-const backButtons = collect(drawer, (node) => node.type === 'button' && node.props.title === 'action.backToSession')
-if (backButtons.length === 0) throw new Error('the session row has no back-to-session control')
-backButtons[0].props.onClick({ stopPropagation() {} })
-if (!sessionOpens.includes('sess-1')) throw new Error(`back-to-session did not open the Session: ${JSON.stringify(sessionOpens)}`)
-if (!panelSelects.includes('conversation')) throw new Error(`back-to-session did not select the conversation: ${JSON.stringify(panelSelects)}`)
-
-const chip = titleRegistration.component({ useTabInfo: props.useTabInfo })
-const chipText = (chip.children || []).filter((child) => typeof child === 'string')
-if (!chipText.join('').includes('demo.md')) throw new Error(`title component did not include the tab title: ${JSON.stringify(chipText)}`)
 
 // A newer version of the open file re-reads it (the live-refresh path).
 const beforeReload = readCalls
-const v2props = {
-  ...props,
-  useResource: () => ({ status: 'live', value: { absolutePath: '/ws/docs/demo.md', version: 'v2', bytes: 700 } }),
-}
-// Deep expansion runs the nested document component's effects, as React would.
-walk(pageRegistration.component(v2props), () => {})
+const v2 = { useResource: () => ({ status: 'live', value: { absolutePath: '/ws/docs/second.md', version: 'v2', bytes: 700 } }) }
+walk(renderView(v2), () => {})
 await new Promise((resolve) => setTimeout(resolve, 0))
 if (readCalls <= beforeReload) throw new Error('a new file version did not re-read the document')
-const afterReload = pageRegistration.component({
-  ...props,
-  useResource: () => ({ status: 'live', value: { absolutePath: '/ws/docs/demo.md', version: 'v2', bytes: 700 } }),
-})
-const reloadedClasses = new Set()
-walk(afterReload, (node) => {
-  if (typeof node.type === 'string' && typeof node.props.className === 'string') node.props.className.split(/\s+/).forEach((name) => reloadedClasses.add(name))
-})
-if (!reloadedClasses.has('mo-md')) throw new Error('the document disappeared after a version change')
+if (!classSet(renderView(v2)).has('mo-md')) throw new Error('the document disappeared after a version change')
 
 // Closing a tab keeps its catalog row so the reader can come back to it.
 openTabsSnapshot = [{ sessionId: 'sess-1', tabId: 'tab-1', kind: 'markdown-outline', contentId: ADDRESS }]
 openTabsListeners.forEach((listener) => listener())
 await new Promise((resolve) => setTimeout(resolve, 0))
-const kept = pageRegistration.component(props)
-const keptRows = collect(kept, (node) => typeof node.type === 'string' && node.props.className === 'mo-row mo-row-file')
-if (keptRows.length !== 2) throw new Error(`closing a tab dropped its catalog row: ${keptRows.length} rows remain`)
+if (fileRowsOf(renderView({})).length !== 2) throw new Error('closing a tab dropped its catalog row')
 
 // Setext headings, soft/hard breaks, and intraword underscores.
 openTabsSnapshot = [
@@ -446,48 +347,58 @@ await new Promise((resolve) => setTimeout(resolve, 0))
 const specialAddress = 'dsh-resource://file/session/sess-1/docs/special.md'
 const specialTab = { ...tab, id: 'tab-3', title: 'special.md', contentId: specialAddress,
   navigation: { address: specialAddress, params: undefined, revision: 0 } }
-componentRegistration.component({
-  ...props,
-  useTabInfo: () => ({ sidebar: { expanded: true }, panel: { id: 'pane-1', isFloating: false }, tab: specialTab }),
-})
-const specialPanel = pageRegistration.component({
-  ...props,
-  useResource: () => ({ status: 'live', value: { absolutePath: '/ws/docs/special.md', version: 'v1' } }),
-})
-const specialHeadings = collect(specialPanel, (node) => typeof node.type === 'string' && /^h[1-6]$/.test(node.type))
+redirect({ useTabInfo: () => ({ sidebar: { expanded: true }, panel: { id: 'pane-1', isFloating: false }, tab: specialTab }) })
+const specialView = renderView({ useResource: () => ({ status: 'live', value: { absolutePath: '/ws/docs/special.md', version: 'v1' } }) })
+const specialHeadings = collect(specialView, (node) => typeof node.type === 'string' && /^h[1-6]$/.test(node.type))
 if (specialHeadings.length !== 1 || specialHeadings[0].type !== 'h1') {
   throw new Error(`setext heading was not rendered as H1: ${JSON.stringify(specialHeadings.map((node) => node.type))}`)
 }
-const brs = collect(specialPanel, (node) => node.type === 'br')
-if (brs.length !== 1) throw new Error(`expected exactly one hard break, found ${brs.length}`)
-const emphasis = collect(specialPanel, (node) => node.type === 'em')
-if (emphasis.length !== 0) throw new Error(`intraword underscore turned into emphasis: ${emphasis.length}`)
-const specialChipRows = collect(pageRegistration.component(props), (node) => typeof node.type === 'string' && node.props.className === 'mo-row mo-row-file')
-if (specialChipRows.length !== 4) throw new Error(`the catalog did not grow to four files: ${specialChipRows.length}`)
+if (collect(specialView, (node) => node.type === 'br').length !== 1) throw new Error('expected exactly one hard break')
+if (collect(specialView, (node) => node.type === 'em').length !== 0) throw new Error('intraword underscore turned into emphasis')
+if (fileRowsOf(specialView).length !== 4) throw new Error(`the catalog did not grow to four files: ${fileRowsOf(specialView).length}`)
 
+// An empty file shows the empty state.
 const emptyAddress = 'dsh-resource://file/session/sess-1/docs/empty.md'
 const emptyTab = { ...tab, id: 'tab-4', title: 'empty.md', contentId: emptyAddress,
   navigation: { address: emptyAddress, params: undefined, revision: 0 } }
-componentRegistration.component({
-  ...props,
-  useTabInfo: () => ({ sidebar: { expanded: true }, panel: { id: 'pane-1', isFloating: false }, tab: emptyTab }),
-})
-const emptyPanel = pageRegistration.component({
-  ...props,
-  useResource: () => ({ status: 'live', value: { absolutePath: '/ws/docs/empty.md', version: 'v1' } }),
-})
-const emptyTexts = []
-walk(emptyPanel, (node) => {
-  for (const child of node.children) if (typeof child === 'string') emptyTexts.push(child)
-})
-if (!emptyTexts.includes('state.empty')) throw new Error(`an empty file did not show the empty state: ${JSON.stringify(emptyTexts)}`)
+redirect({ useTabInfo: () => ({ sidebar: { expanded: true }, panel: { id: 'pane-1', isFloating: false }, tab: emptyTab }) })
+const emptyView = renderView({ useResource: () => ({ status: 'live', value: { absolutePath: '/ws/docs/empty.md', version: 'v1' } }) })
+if (!textsOf(emptyView).includes('state.empty')) throw new Error(`an empty file did not show the empty state: ${JSON.stringify(textsOf(emptyView))}`)
+
+// A plan opens the view and renders its Markdown through the plan resource.
+const planAddress = 'dsh-resource://plan/sess-1/call-9'
+const planTab = { ...tab, id: 'tab-plan', title: 'Plan', contentId: planAddress,
+  navigation: { address: planAddress, params: undefined, revision: 0 } }
+redirect({ useTabInfo: () => ({ sidebar: { expanded: true }, panel: { id: 'pane-1', isFloating: false }, tab: planTab }) })
+const planProps = {
+  useResource: (address) => address.startsWith('dsh-resource://plan/')
+    ? { status: 'live', value: { callId: 'call-9', title: 'Plan title', markdown: '# Plan title\n\n## Step\n' }, version: 'v1' }
+    : { status: 'live', value: { absolutePath: '/ws/docs/demo.md', version: 'v1' } },
+}
+const planView = renderView(planProps)
+walk(planView, () => {})
+if (!classSet(planView).has('mo-md')) throw new Error('the plan Markdown did not render in the session view')
+const planTitles = collect(planView, (node) => typeof node.type === 'string' && node.props.className === 'mo-title')
+  .map((node) => node.children.join(''))
+if (!planTitles.some((title) => title.includes('Plan title'))) throw new Error(`the plan title did not reach the document pane: ${JSON.stringify(planTitles)}`)
+const planRows = fileRowsOf(renderView(planProps))
+if (planRows.length !== 5) throw new Error(`the plan row did not join the document list: ${planRows.length}`)
+if (!collect(renderView(planProps), (node) => typeof node.type === 'string' && node.props.className === 'mo-row-label')
+  .some((node) => node.children.join('').includes('Plan title'))) {
+  throw new Error('the plan title did not reach the tree')
+}
+
+// The tab chip renders the markdown glyph before the captured title.
+const chip = titleRegistration.component({ useTabInfo: props.useTabInfo })
+const chipText = (chip.children || []).filter((child) => typeof child === 'string')
+if (!chipText.join('').includes('demo.md')) throw new Error(`title component did not include the tab title: ${JSON.stringify(chipText)}`)
 
 // Disposal removes the catalog and the tab registrations.
 disposeFns.forEach((dispose) => dispose())
 console.log(JSON.stringify({
   ok: true,
   readCalls,
-  panelClasses: [...classes].sort(),
-  pageClasses: [...drawerClasses].sort(),
-  headings: headingTexts,
+  viewClasses: [...viewClasses].sort(),
+  headingLines,
+  planRows: planRows.length,
 }, null, 2))
